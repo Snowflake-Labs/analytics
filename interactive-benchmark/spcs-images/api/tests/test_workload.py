@@ -74,6 +74,18 @@ class ContextPoolTest(unittest.TestCase):
         self.assertEqual(2, pool._idle[("DB", "B")].qsize())
 
 
+class WarmupCapacityTest(unittest.TestCase):
+    def test_warmed_connections_do_not_consume_capacity(self) -> None:
+        pool = server.ConnectionPool(size=2)
+        pool._new_connection = Mock(side_effect=lambda context: Mock(**{"is_closed.return_value": False}))
+        self.assertEqual(2, pool.warmup(2))
+        with patch.object(server, "POOL_ACQUIRE_TIMEOUT", 0.1):
+            first = pool.acquire()
+            second = pool.acquire()
+        self.assertIsNot(first, second)
+        self.assertEqual(2, pool._new_connection.call_count)
+
+
 class WorkloadEndpointTest(unittest.IsolatedAsyncioTestCase):
     async def test_workload_lists_ids_and_weights(self) -> None:
         registry = {
