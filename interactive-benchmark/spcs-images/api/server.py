@@ -87,13 +87,13 @@ def connection_kwargs(context: Context) -> dict[str, Any]:
 
 
 class ConnectionPool:
-    """Bounded, blocking pool: at most POOL_SIZE live connections.
+    """Bounded, blocking pool: at most POOL_SIZE connections in use at once.
 
-    - A Semaphore caps total live connections (idle + borrowed) across contexts.
+    - A Semaphore caps borrowed connections (concurrent queries) across contexts.
     - Idle connections are kept in one unbounded Queue per (database, schema),
       so a connection is only reused for queries in its own context.
     - acquire() blocks up to POOL_ACQUIRE_TIMEOUT waiting for a slot; if the
-      idle queue is empty when a slot is granted, a new connection is created.
+      context's idle queue is empty when a slot is granted, a new connection is created.
     - release() returns the connection to the idle queue and frees the slot.
     """
 
@@ -139,23 +139,20 @@ class ConnectionPool:
             self._sem.release()
 
     def warmup(self, count: int | None = None, contexts: list[Context] | None = None) -> int:
-        """Pre-open up to `count` (default: POOL_SIZE) connections and park them.
+        """Pre-open up to `count` (default: POOL_SIZE) idle connections.
 
         Connections are spread round-robin over `contexts` (default: the default
-        context). Acquires a semaphore slot for each connection so the pool
-        invariant (at most ``size`` live connections) is preserved.
+        context). Idle connections do not hold a semaphore slot; acquire() takes
+        one when it borrows them.
         """
         want = self._size if count is None else min(count, self._size)
         contexts = contexts or [DEFAULT_CONTEXT]
         opened = 0
         for i in range(want):
             context = contexts[i % len(contexts)]
-            if not self._sem.acquire(timeout=0):
-                break
             try:
                 conn = self._new_connection(context)
             except Exception as exc:
-                self._sem.release()
                 raise RuntimeError(
                     f"Pool warmup failed after {opened}/{want}: {exc}"
                 ) from exc
