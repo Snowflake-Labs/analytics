@@ -51,7 +51,8 @@ log = logging.getLogger("benchmark")
 def base_connection_kwargs() -> dict[str, Any]:
     if CONNECTION_NAME:
         os.environ["SNOWFLAKE_DEFAULT_CONNECTION_NAME"] = CONNECTION_NAME
-        return {"connection_name": CONNECTION_NAME}
+        role = os.environ.get("SNOWFLAKE_ROLE")
+        return {"connection_name": CONNECTION_NAME, **({"role": role} if role else {})}
     return {
         "account": os.environ["SNOWFLAKE_ACCOUNT"],
         "user": os.environ.get("SNOWFLAKE_USER"),
