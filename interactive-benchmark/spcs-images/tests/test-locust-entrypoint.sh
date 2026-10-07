@@ -36,6 +36,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODE = os.environ["STUB_MODE"]
+HITS = open(os.environ["STUB_HITS_FILE"], "a", buffering=1)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -53,13 +54,18 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/ready":
             self.reply(200, {"status": "ready"})
-        elif self.path == "/api/queries":
-            self.reply(200, [] if MODE == "no_queries" else ["benchmark-query"])
+        elif self.path == "/api/workload":
+            self.reply(200, [] if MODE == "no_queries" else [
+                {"id": "heavy", "weight": 90},
+                {"id": "light", "weight": 10},
+            ])
         else:
             self.reply(404, {})
 
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        if self.path == "/api/run/interactive":
+            HITS.write(body.get("query_id", "?") + "\n")
         if self.path == "/api/run/interactive" and MODE == "fail_interactive":
             self.reply(500, {"error": "stub failure"})
         else:
@@ -76,7 +82,8 @@ PY
 run_entrypoint() {
   local mode="$1" port web_port
   shift
-  STUB_MODE="$mode" setsid "$VENV/bin/python" "$TMP_DIR/stub.py" >"$TMP_DIR/port" &
+  : >"$TMP_DIR/hits"
+  STUB_MODE="$mode" STUB_HITS_FILE="$TMP_DIR/hits" setsid "$VENV/bin/python" "$TMP_DIR/stub.py" >"$TMP_DIR/port" &
   STUB_PID=$!
   for _ in $(seq 50); do [[ -s "$TMP_DIR/port" ]] && break; sleep 0.1; done
   port="$(cat "$TMP_DIR/port")"
@@ -115,6 +122,17 @@ grep -q "\[baseline\] VERDICT: PASS" "$TMP_DIR/out" || fail "baseline did not pa
 grep -q "\[benchmark\] VERDICT: PASS" "$TMP_DIR/out" || fail "benchmark did not pass"
 grep -q "benchmark=COMPLETED" "$TMP_DIR/out" || fail "heartbeat status wrong"
 [[ -f "$TMP_DIR/results/locust_stats_stats.csv" ]] || fail "results not written to BENCHMARK_RESULTS_DIR"
+
+# 1b. Queries are chosen by weight (90/10). 10 users give ~40 requests, so a
+#     heavy share under 75% is a >3 sigma event if weights are applied.
+run_entrypoint ok LOCUST_USERS=10 LOCUST_SPAWN=10
+expect_finished weights
+heavy="$(grep -c '^heavy$' "$TMP_DIR/hits" || true)"
+light="$(grep -c '^light$' "$TMP_DIR/hits" || true)"
+total=$((heavy + light))
+(( total >= 25 )) || fail "too few interactive requests to check weights: $total"
+(( heavy * 100 >= total * 75 )) || fail "weights not applied: heavy=$heavy light=$light"
+(( light > 0 )) || fail "light query never chosen"
 
 # 2. Every interactive request fails: verdict FAIL, results still printed.
 run_entrypoint fail_interactive

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Semaphore
@@ -38,6 +40,7 @@ QUERIES_DIR = os.environ.get(
     "BENCHMARK_QUERIES_DIR",
     str(ROOT_DIR / "test") if not Path("/app/test").exists() else "/app/test",
 )
+WORKLOAD_FILE = os.environ.get("BENCHMARK_WORKLOAD_FILE")
 WORKERS = int(os.environ.get("WORKERS", "1"))
 PORT = int(os.environ.get("PORT", "3000"))
 
@@ -57,12 +60,25 @@ def base_connection_kwargs() -> dict[str, Any]:
     }
 
 
-def connection_kwargs() -> dict[str, Any]:
+Context = tuple[str, str]
+DEFAULT_CONTEXT: Context = (DATABASE, INTERACTIVE_SCHEMA)
+
+
+@dataclass(frozen=True)
+class Query:
+    id: str
+    sql: str
+    weight: float
+    context: Context
+
+
+def connection_kwargs(context: Context = DEFAULT_CONTEXT) -> dict[str, Any]:
+    database, schema = context
     return {
         **base_connection_kwargs(),
         "warehouse": INTERACTIVE_WAREHOUSE,
-        "database": DATABASE,
-        "schema": INTERACTIVE_SCHEMA,
+        "database": database,
+        "schema": schema,
         "session_parameters": {
             "QUERY_TAG": QUERY_TAG,
             "USE_CACHED_RESULT": False,
@@ -73,8 +89,9 @@ def connection_kwargs() -> dict[str, Any]:
 class ConnectionPool:
     """Bounded, blocking pool: at most POOL_SIZE live connections.
 
-    - A Semaphore caps total live connections (idle + borrowed).
-    - Idle connections are kept in an unbounded Queue.
+    - A Semaphore caps total live connections (idle + borrowed) across contexts.
+    - Idle connections are kept in one unbounded Queue per (database, schema),
+      so a connection is only reused for queries in its own context.
     - acquire() blocks up to POOL_ACQUIRE_TIMEOUT waiting for a slot; if the
       idle queue is empty when a slot is granted, a new connection is created.
     - release() returns the connection to the idle queue and frees the slot.
@@ -82,13 +99,16 @@ class ConnectionPool:
 
     def __init__(self, size: int = POOL_SIZE) -> None:
         self._size = size
-        self._idle: Queue[snowflake.connector.SnowflakeConnection] = Queue()
+        self._idle: dict[Context, Queue[snowflake.connector.SnowflakeConnection]] = {}
         self._sem = Semaphore(size)
 
-    def _new_connection(self) -> snowflake.connector.SnowflakeConnection:
-        return snowflake.connector.connect(**connection_kwargs())
+    def _queue(self, context: Context) -> Queue[snowflake.connector.SnowflakeConnection]:
+        return self._idle.setdefault(context, Queue())
 
-    def acquire(self) -> snowflake.connector.SnowflakeConnection:
+    def _new_connection(self, context: Context) -> snowflake.connector.SnowflakeConnection:
+        return snowflake.connector.connect(**connection_kwargs(context))
+
+    def acquire(self, context: Context = DEFAULT_CONTEXT) -> snowflake.connector.SnowflakeConnection:
         if not self._sem.acquire(timeout=POOL_ACQUIRE_TIMEOUT):
             raise HTTPException(
                 status_code=503,
@@ -100,9 +120,9 @@ class ConnectionPool:
         try:
             while True:
                 try:
-                    conn = self._idle.get_nowait()
+                    conn = self._queue(context).get_nowait()
                 except Empty:
-                    return self._new_connection()
+                    return self._new_connection(context)
                 if conn.is_closed():
                     continue
                 return conn
@@ -110,46 +130,52 @@ class ConnectionPool:
             self._sem.release()
             raise
 
-    def release(self, conn: snowflake.connector.SnowflakeConnection) -> None:
+    def release(
+        self, conn: snowflake.connector.SnowflakeConnection, context: Context = DEFAULT_CONTEXT
+    ) -> None:
         try:
             if not conn.is_closed():
-                self._idle.put_nowait(conn)
+                self._queue(context).put_nowait(conn)
         finally:
             self._sem.release()
 
-    def warmup(self, count: int | None = None) -> int:
+    def warmup(self, count: int | None = None, contexts: list[Context] | None = None) -> int:
         """Pre-open up to `count` (default: POOL_SIZE) connections and park them.
 
-        Acquires a semaphore slot for each connection so the pool invariant
-        (at most ``size`` live connections) is preserved.
+        Connections are spread round-robin over `contexts` (default: the default
+        context). Acquires a semaphore slot for each connection so the pool
+        invariant (at most ``size`` live connections) is preserved.
         """
         want = self._size if count is None else min(count, self._size)
+        contexts = contexts or [DEFAULT_CONTEXT]
         opened = 0
-        for _ in range(want):
+        for i in range(want):
+            context = contexts[i % len(contexts)]
             if not self._sem.acquire(timeout=0):
                 break
             try:
-                conn = self._new_connection()
+                conn = self._new_connection(context)
             except Exception as exc:
                 self._sem.release()
                 raise RuntimeError(
                     f"Pool warmup failed after {opened}/{want}: {exc}"
                 ) from exc
-            self._idle.put_nowait(conn)
+            self._queue(context).put_nowait(conn)
             opened += 1
         return opened
 
     def close_all(self) -> None:
         """Close all idle connections in the pool."""
-        while True:
-            try:
-                conn = self._idle.get_nowait()
-            except Empty:
-                break
-            try:
-                conn.close()
-            except Exception:
-                pass
+        for queue in list(self._idle.values()):
+            while True:
+                try:
+                    conn = queue.get_nowait()
+                except Empty:
+                    break
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 pool = ConnectionPool()
@@ -157,30 +183,60 @@ pool_ready = asyncio.Event()
 pool_warmup_error: str | None = None
 
 
-def load_query_registry(directory: str) -> dict[str, str]:
-    """Load .sql files from directory into a {stem: sql_text} registry."""
+def load_query_registry(directory: str) -> dict[str, Query]:
+    """Load .sql files from directory, equally weighted, in the default context."""
     queries_path = Path(directory)
-    registry: dict[str, str] = {}
+    registry: dict[str, Query] = {}
     if not queries_path.exists():
         log.warning("Queries directory does not exist: %s", directory)
         return registry
     for sql_file in sorted(queries_path.glob("*.sql")):
         text = sql_file.read_text().strip()
         if text:
-            registry[sql_file.stem] = text
+            registry[sql_file.stem] = Query(sql_file.stem, text, 1.0, DEFAULT_CONTEXT)
     log.info("Loaded %d queries from %s", len(registry), directory)
     return registry
 
 
-query_registry: dict[str, str] = load_query_registry(QUERIES_DIR)
+def load_workload_file(path: str) -> dict[str, Query]:
+    """Load a workload manifest: {"queries": [{id, sql, weight, database, schema}]}."""
+    entries = json.loads(Path(path).read_text())["queries"]
+    if not entries:
+        raise ValueError(f"Workload file {path} has no queries")
+    registry: dict[str, Query] = {}
+    for entry in entries:
+        query = Query(
+            id=str(entry["id"]),
+            sql=str(entry["sql"]).strip(),
+            weight=float(entry["weight"]),
+            context=(str(entry["database"]), str(entry["schema"])),
+        )
+        if not query.sql:
+            raise ValueError(f"Query {query.id} in {path} has empty SQL")
+        if query.weight <= 0:
+            raise ValueError(f"Query {query.id} in {path} has non-positive weight {query.weight}")
+        if query.id in registry:
+            raise ValueError(f"Duplicate query id {query.id} in {path}")
+        registry[query.id] = query
+    log.info("Loaded %d weighted queries from %s", len(registry), path)
+    return registry
 
 
-def execute_query(sql: str) -> dict[str, Any]:
-    conn = pool.acquire()
+query_registry: dict[str, Query] = (
+    load_workload_file(WORKLOAD_FILE) if WORKLOAD_FILE else load_query_registry(QUERIES_DIR)
+)
+
+
+def workload_contexts() -> list[Context]:
+    return sorted({query.context for query in query_registry.values()}) or [DEFAULT_CONTEXT]
+
+
+def execute_query(query: Query) -> dict[str, Any]:
+    conn = pool.acquire(query.context)
     try:
         with conn.cursor(DictCursor) as cur:
             t0 = time.perf_counter()
-            cur.execute(sql)
+            cur.execute(query.sql)
             elapsed_ms = round((time.perf_counter() - t0) * 1000)
             rows = cur.fetchall()
             return {
@@ -190,7 +246,7 @@ def execute_query(sql: str) -> dict[str, Any]:
                 "query_id": cur.sfqid,
             }
     finally:
-        pool.release(conn)
+        pool.release(conn, query.context)
 
 
 @asynccontextmanager
@@ -212,7 +268,7 @@ async def lifespan(_app: FastAPI):
         async def _warmup() -> None:
             global pool_warmup_error
             try:
-                opened = await asyncio.to_thread(pool.warmup, POOL_WARMUP)
+                opened = await asyncio.to_thread(pool.warmup, POOL_WARMUP, workload_contexts())
             except Exception as exc:  # noqa: BLE001
                 pool_warmup_error = str(exc)
                 log.exception("Connection pool warmup failed: %s", exc)
@@ -276,16 +332,21 @@ async def list_queries() -> list[str]:
     return sorted(query_registry.keys())
 
 
+@app.get("/api/workload")
+async def workload() -> list[dict[str, Any]]:
+    return [{"id": q.id, "weight": q.weight} for q in sorted(query_registry.values(), key=lambda q: q.id)]
+
+
 @app.post("/api/run")
 @app.post("/api/run/interactive")
 async def run_query(body: RunRequest) -> dict[str, Any]:
-    sql = query_registry.get(body.query_id)
-    if sql is None:
+    query = query_registry.get(body.query_id)
+    if query is None:
         raise HTTPException(
             status_code=404,
             detail=f"Unknown query_id '{body.query_id}'. Use GET /api/queries to list available IDs.",
         )
-    return await asyncio.to_thread(execute_query, sql)
+    return await asyncio.to_thread(execute_query, query)
 
 
 @app.post("/api/run/baseline")
