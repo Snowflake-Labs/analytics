@@ -52,8 +52,13 @@ COPY locust/pyproject.toml locust/uv.lock /app/locust/
 RUN cd /app/locust \
     && UV_PROJECT_ENVIRONMENT=/opt/venvs/locust uv sync --frozen --no-dev --no-install-project
 
+COPY controller/pyproject.toml controller/uv.lock /app/controller/
+RUN cd /app/controller \
+    && UV_PROJECT_ENVIRONMENT=/opt/venvs/controller uv sync --frozen --no-dev --no-install-project
+
 COPY api/server.py api/entrypoint.sh /app/api/
 COPY locust/locustfile.py locust/entrypoint.sh /app/locust/
+COPY controller/iwb /app/controller/iwb
 COPY role-entrypoint.sh /usr/local/bin/benchmark-entrypoint
 
 RUN chmod +x \

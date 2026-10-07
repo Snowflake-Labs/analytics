@@ -24,7 +24,9 @@
 #
 # After both phases complete, results are printed to stdout and the
 # container loops with periodic heartbeats so `snow spcs service logs`
-# can retrieve results at any later time.
+# can retrieve results at any later time. With BENCHMARK_EXIT_AFTER_RUN=1
+# it exits instead: 0 = benchmark PASS, 1 = API not ready, 2 = baseline
+# FAIL, 3 = benchmark FAIL.
 
 set -uo pipefail
 
@@ -51,6 +53,7 @@ if [[ ! -f "$LOCUST_FILE" && -f /app/locustfile.py ]]; then
   LOCUST_FILE=/app/locustfile.py
 fi
 RESULTS_DIR="${BENCHMARK_RESULTS_DIR:-/tmp}"
+EXIT_AFTER_RUN="${BENCHMARK_EXIT_AFTER_RUN:-0}"
 
 # Baseline thresholds
 BASELINE_RUN_TIME="${BASELINE_RUN_TIME:-1m}"
@@ -279,6 +282,9 @@ if ! check_baseline "${RESULTS_DIR}/baseline_stats_stats.csv"; then
   echo ""
   echo "[entrypoint] Baseline failed. Skipping Snowflake benchmark."
   echo "[entrypoint] Review the baseline results above to diagnose the issue."
+  if [[ "$EXIT_AFTER_RUN" == 1 ]]; then
+    exit 2
+  fi
 
   # Keep container alive for log retrieval
   while true; do
@@ -315,6 +321,9 @@ warn_if_cpu_bound benchmark "${RESULTS_DIR}/locust_run.log"
 BENCHMARK_STATUS=COMPLETED
 if ! check_benchmark "${RESULTS_DIR}/locust_stats_stats.csv"; then
   BENCHMARK_STATUS=FAILED
+fi
+if [[ "$EXIT_AFTER_RUN" == 1 ]]; then
+  [[ "$BENCHMARK_STATUS" == COMPLETED ]] && exit 0 || exit 3
 fi
 
 # Keep container alive so logs remain retrievable

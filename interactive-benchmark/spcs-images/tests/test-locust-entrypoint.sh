@@ -166,4 +166,9 @@ run_entrypoint ok BENCHMARK_MAX_FAILURE_PCT=1%
 grep -q "BENCHMARK_MAX_FAILURE_PCT must be a number" "$TMP_DIR/out" || fail "malformed threshold accepted"
 ! grep -q "PHASE 1" "$TMP_DIR/out" || fail "ran with a malformed threshold"
 
+# 5. BENCHMARK_EXIT_AFTER_RUN=1 (controller mode): exits with the verdict instead of looping.
+run_entrypoint ok BENCHMARK_EXIT_AFTER_RUN=1
+grep -q "\[benchmark\] VERDICT: PASS" "$TMP_DIR/out" || fail "exit-after-run did not finish the benchmark"
+! grep -q "=== HEARTBEAT" "$TMP_DIR/out" || fail "exit-after-run still entered the heartbeat loop"
+
 echo "Locust entrypoint contract passed."

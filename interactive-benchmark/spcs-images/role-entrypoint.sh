@@ -4,6 +4,7 @@ set -euo pipefail
 
 API_ENTRYPOINT="${BENCHMARK_API_ENTRYPOINT:-/app/api/entrypoint.sh}"
 LOCUST_ENTRYPOINT="${BENCHMARK_LOCUST_ENTRYPOINT:-/app/locust/entrypoint.sh}"
+CONTROLLER_PYTHON="${BENCHMARK_CONTROLLER_PYTHON:-/opt/venvs/controller/bin/python}"
 
 case "${BENCHMARK_ROLE:-}" in
   api)
@@ -12,8 +13,12 @@ case "${BENCHMARK_ROLE:-}" in
   locust)
     exec "$LOCUST_ENTRYPOINT" "$@"
     ;;
+  controller)
+    cd /app/controller
+    exec "$CONTROLLER_PYTHON" -m iwb "$@"
+    ;;
   *)
-    echo "[entrypoint] ERROR: BENCHMARK_ROLE must be 'api' or 'locust'." >&2
+    echo "[entrypoint] ERROR: BENCHMARK_ROLE must be 'api', 'locust' or 'controller'." >&2
     exit 64
     ;;
 esac

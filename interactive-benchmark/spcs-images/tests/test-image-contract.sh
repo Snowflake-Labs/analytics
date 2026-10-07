@@ -42,6 +42,9 @@ locust_output="$(
 
 docker run --rm --entrypoint /opt/venvs/api/bin/python "$IMAGE_REF" \
   -c "import fastapi, snowflake.connector, uvicorn"
+docker run --rm --entrypoint /opt/venvs/controller/bin/python -w /app/controller "$IMAGE_REF" \
+  -c "import iwb.cli, jsonschema, snowflake.connector"
+docker run --rm -e BENCHMARK_ROLE=controller "$IMAGE_REF" run --help >/dev/null
 docker run --rm --entrypoint /opt/venvs/locust/bin/python "$IMAGE_REF" \
   -c "import importlib.util; assert importlib.util.find_spec('locust') is not None"
 
