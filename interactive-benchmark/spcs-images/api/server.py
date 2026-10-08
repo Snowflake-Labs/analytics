@@ -228,7 +228,7 @@ query_registry: dict[str, Query] = (
 
 
 def workload_contexts() -> list[Context]:
-    return sorted({query.context for query in query_registry.values()}) or [DEFAULT_CONTEXT]
+    return sorted({query.context for query in query_registry.values()})
 
 
 def execute_query(query: Query) -> dict[str, Any]:
