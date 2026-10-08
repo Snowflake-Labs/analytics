@@ -52,6 +52,10 @@ behaviour (see [How it works](#how-it-works)).
 - `fallback_warehouse` (optional): a standard warehouse that re-runs statements hitting the
   5 s interactive timeout. Without it those statements fail and count against the 1% failure
   gate, which is what you want when measuring the interactive warehouse alone.
+- `lookup_warehouse` (optional, `query_ids` only): query IDs are looked up through the GS
+  monitoring API, which needs no warehouse but only covers job retention (14 days by default).
+  To also search `SNOWFLAKE.ACCOUNT_USAGE` (365 days, needs access to it), name a standard
+  warehouse here.
 - `name` (optional; a letter, then up to 30 letters, digits or `_`) becomes the uppercased run
   id prefix, and so the results folder name; anything else falls back to `IWB`.
 - Each Locust user waits 0.5–1.5 s between requests, so `concurrent_users` is simulated
@@ -113,9 +117,9 @@ When bootstrap exits without the controller's final event, or with a different c
   interactive tables explicitly: `GRANT SELECT ON ALL TABLES` does not cover them.
 - `warehouse.existing`: USAGE on that interactive warehouse.
 - `warehouse.create`: `CREATE WAREHOUSE` on the account.
-- `fallback_warehouse`: USAGE on it.
-- `workload.query_ids`: the queries must be visible to the role. Without SNOWFLAKE database
-  access, only the role's own queries among its latest 10,000 (within 7 days) can be found.
+- `fallback_warehouse`, `lookup_warehouse`: USAGE on them.
+- `workload.query_ids`: your own queries (any role), or MONITOR on the user or the query's
+  warehouse.
 - `--results-stage`: READ and WRITE on the stage.
 
 ## Troubleshooting
@@ -125,7 +129,7 @@ When bootstrap exits without the controller's final event, or with a different c
 | Exception from `Sandbox.create` (auth error or 403) | Cortex Sandboxes are not enabled for the account, or the role cannot create sandboxes |
 | `bootstrap exited` after a uv or pip 403 or download error | The sandbox cannot reach pypi.org |
 | Exit 30, `does not compile for this role` | Missing USAGE or SELECT on an object the query reads |
-| Exit 30, `Query IDs not found` | The role cannot see the queries: not its own, older than 7 days, or no SNOWFLAKE database access |
+| Exit 30, `Query IDs not found` | Not visible to you (not your own, no MONITOR), or older than job retention (14 days by default): set `lookup_warehouse` to search ACCOUNT_USAGE |
 | Exit 30, interactive table not attached | `warehouse.existing` does not have that table attached |
 | Exit 40 | The baseline failed (the sandbox cannot drive that many users), or the API never became ready |
 | Exit 20 | More than 1% of queries failed, for example on the 5 s interactive timeout with no `fallback_warehouse` |
