@@ -136,9 +136,12 @@ When bootstrap exits without the controller's final event, or with a different c
   warm-up, the 1-minute baseline, ramp-up plus `run_minutes`, then measurement and teardown.
 - The API and Locust share one container. The launcher picks the memory tier from
   `concurrent_users`: 4g (2 cores) up to 50, 16g (4 cores) up to 200, 32g (6 cores) above.
-  Verified up to 50 users on 4g; the baseline gate fails (exit 40) if the sandbox cannot keep up.
-- The launcher's deadline is the run length plus 2 s per user plus 60 minutes, which is longer
-  than the controller's own timeouts. `idle_suspend` is that plus 5 minutes.
+  Verified up to 200 users on 16g (baseline p99 2 ms at 200 req/s); the baseline gate fails
+  (exit 40) if the sandbox cannot keep up.
+- The launcher's deadline is the controller's worst case (`spcs-images/controller/iwb/budget.py`:
+  two 15-minute warehouse waits, the Locust timeout, setup and teardown) plus 10 minutes for the
+  install, so the controller always times out and cleans up first. `idle_suspend` is that plus 5
+  minutes.
 - If the launcher is stopped or hits its deadline, it sends SIGTERM to the controller and waits
   up to 5 minutes for teardown (which drops a created warehouse) before terminating the sandbox.
 
@@ -153,7 +156,7 @@ The SDK's `code=`/`command=` option is not used. In `snowflake-sandbox-python` 0
 
 ## Platform notes
 
-Verified on a preprod account (`sandbox-base:1.0.4`, Python 3.11, SDK 0.2.2a4) with 10- and 50-user runs that created and dropped their warehouse:
+Verified on a preprod account (`sandbox-base:1.0.4`, Python 3.11, SDK 0.2.2a4) with 10- to 200-user runs that created and dropped their warehouse:
 
 - The platform-rendered `default` connection works with the Python connector, as the `--role` role.
 - `exec()` raises on a non-zero exit, so the launcher detects completion from an exit-code file, not a PID.

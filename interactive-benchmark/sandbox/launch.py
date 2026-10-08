@@ -35,6 +35,9 @@ from snowflake.sandbox import Sandbox, SandboxError, StageMount
 
 HERE = Path(__file__).resolve().parent
 IMAGE_SOURCES = HERE.parent / "spcs-images"
+sys.path.insert(0, str(IMAGE_SOURCES / "controller"))
+from iwb import budget  # noqa: E402  (dependency-free; shared with the controller)
+
 WORK_DIR = "/var/tmp/iwb"
 CODE_DIR = f"{WORK_DIR}/code"
 RUN_LOG = f"{WORK_DIR}/run.log"
@@ -43,9 +46,8 @@ CONTROLLER_PID = f"{WORK_DIR}/controller.pid"
 RESULTS_MOUNT = "/iwb/results"
 POLL_SECONDS = 15
 MAX_POLL_FAILURES = 5
-# Above the controller's own worst case (warehouse start 15 min, Locust slack 21 min plus
-# 2 s per user, setup and teardown), so the controller times out first and cleans up.
-RUN_MARGIN = timedelta(minutes=60)
+# Dependency install before the controller starts.
+INSTALL_SECONDS = 600
 # SIGTERM to the controller runs its teardown: stop Locust and the API, drop a created warehouse.
 STOP_GRACE = timedelta(minutes=5)
 
@@ -79,9 +81,11 @@ def zip_bundle(bundle: Path) -> bytes:
 
 
 def run_budget(config: dict) -> timedelta:
-    """Whole minutes (the sandbox's idle_suspend resolution)."""
-    minutes = float(config["run_minutes"]) + 2 * int(config["concurrent_users"]) / 60
-    return timedelta(minutes=math.ceil(minutes)) + RUN_MARGIN
+    """Longer than the controller's worst case, so it times out and cleans up first; whole minutes
+    (the sandbox's idle_suspend resolution)."""
+    run_secs = budget.run_seconds(float(config["run_minutes"]))
+    seconds = budget.worst_case_seconds(run_secs, int(config["concurrent_users"])) + INSTALL_SECONDS
+    return timedelta(minutes=math.ceil(seconds / 60))
 
 
 def relay_events(log_text: str, seen: int) -> tuple[int, dict | None]:
@@ -199,7 +203,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _terminate)
     signal.signal(signal.SIGINT, _terminate)
     config = json.loads(args.config.read_text())
-    budget = run_budget(config)
+    run_time = run_budget(config)
     results_stage = args.results_stage.lstrip("@") if args.results_stage else None
     env = {"IWB_RESULTS_DIR": RESULTS_MOUNT} if results_stage else {}
     mounts = ([StageMount.from_stage(results_stage, mount_path=RESULTS_MOUNT, readonly=False)]
@@ -215,11 +219,11 @@ def main() -> int:
             env=env,
             stage_mounts=mounts,
             role=args.role,
-            idle_suspend=budget + STOP_GRACE,
+            idle_suspend=run_time + STOP_GRACE,
             tags={"app": "interactive-benchmark"},
         )
         print(json.dumps({"iwb": "launcher", "sandbox": sandbox.id, "role": args.role or "default"}), flush=True)
-        return run(sandbox, bundle, time.monotonic() + budget.total_seconds())
+        return run(sandbox, bundle, time.monotonic() + run_time.total_seconds())
     finally:
         if sandbox is not None:
             try:
