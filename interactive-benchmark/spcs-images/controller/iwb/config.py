@@ -8,6 +8,8 @@ from pathlib import Path
 
 import jsonschema
 
+from iwb import budget
+
 SCHEMA_PATH = Path(__file__).with_name("iwb-config.schema.json")
 WEIGHT_TOLERANCE = 0.01
 
@@ -20,10 +22,6 @@ class ConfigError(Exception):
 class Context:
     database: str
     schema: str
-
-    @property
-    def qualified(self) -> str:
-        return f"{self.database}.{self.schema}"
 
 
 @dataclass(frozen=True)
@@ -48,7 +46,6 @@ class NewWarehouse:
 
 @dataclass(frozen=True)
 class Config:
-    name: str | None
     context: Context
     sql_entries: tuple[SqlEntry, ...]
     query_id_entries: tuple[QueryIdEntry, ...]
@@ -60,7 +57,7 @@ class Config:
 
     @property
     def run_seconds(self) -> int:
-        return max(1, round(self.run_minutes * 60))
+        return budget.run_seconds(self.run_minutes)
 
 
 def _context(raw: dict) -> Context:
@@ -113,7 +110,6 @@ def parse(raw: dict) -> Config:
             raise ConfigError("warehouse.create: min_cluster_count must not exceed max_cluster_count")
 
     return Config(
-        name=raw.get("name"),
         context=context,
         sql_entries=tuple(sql_entries),
         query_id_entries=tuple(query_id_entries),

@@ -81,12 +81,12 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         result["client"] = load.client
         result["outcome"] = load.outcome
 
-        if load.outcome in ("PASS", "BENCHMARK_FAIL") and load.window_end:
+        if load.outcome in ("PASS", "BENCHMARK_FAIL") and load.window:
             events.emit("MEASURE", "started")
-            result["window"] = {"start": load.window_start, "end": load.window_end}
+            start, end = load.window
+            result["window"] = {"start": start, "end": end}
             result["server"] = metrics.server_side(
-                snow, cfg.context.database, wh.name, cfg.fallback_warehouse, run_id,
-                load.window_start, load.window_end, events,
+                snow, cfg.context.database, wh.name, cfg.fallback_warehouse, run_id, start, end,
             )
             events.emit("MEASURE", "completed", server=result["server"])
 
