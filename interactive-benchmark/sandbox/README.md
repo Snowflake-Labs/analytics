@@ -12,7 +12,7 @@ only read what that role can read.
 
 Needs Python 3.11+ and a `connections.toml` entry for an account with Cortex Sandboxes
 enabled. Only PAT authentication (`authenticator = "PROGRAMMATIC_ACCESS_TOKEN"` or a `token`
-field) has been tested. Run the commands from this directory; `run.json` can live anywhere.
+field) has been tested. From the repository root (`run.json` can live anywhere):
 
 ```bash
 cd interactive-benchmark/sandbox
@@ -45,8 +45,8 @@ behaviour (see [How it works](#how-it-works)).
 ```
 
 - `workload`: either `queries` (SQL texts with `weight_pct` summing to 100; each may override
-  `context`) or `query_ids` (IDs from query history, optionally with `weight_pct`; unweighted
-  IDs share the remainder equally).
+  `context`) or `query_ids` (IDs from query history: plain strings for equal weights, or
+  `{"query_id": ..., "weight_pct": ...}` for every ID, summing to 100).
 - `warehouse`: `create` (dropped when the run ends) or `{"existing": "MY_IW"}` (left as is).
 - `fallback_warehouse` (optional): a standard warehouse that re-runs statements hitting the
   5 s interactive timeout. Without it those statements fail and count against the 1% failure
@@ -54,7 +54,8 @@ behaviour (see [How it works](#how-it-works)).
 - `name` (optional; a letter, then up to 30 letters, digits or `_`) becomes the uppercased run
   id prefix, and so the results folder name; anything else falls back to `IWB`.
 - Each Locust user waits 0.5–1.5 s between requests, so `concurrent_users` is simulated
-  dashboard users, not concurrent queries: 50 users give about 47 queries/s at ~50 ms latency.
+  dashboard users, not concurrent queries: each user sends about one query per second,
+  so 50 users gave about 47 queries/s.
 
 ## Output and results
 
@@ -70,10 +71,12 @@ the run progresses, then `result.json`:
 | `window` | Epoch seconds of the measured window (full load only, ramp-up excluded) |
 | `workload`, `warehouse` | The resolved queries (ids `q01`…, weights, context) and the warehouse used |
 
-Client and server counts differ by up to ~1%: statements in flight when the window opens or
-closes land on one side only. There is no per-query breakdown; query
-`INFORMATION_SCHEMA.QUERY_HISTORY_BY_USER` by the run id as `QUERY_TAG` while it is fresh.
-`QUERY_HISTORY_BY_WAREHOUSE` returns nothing once a created warehouse is dropped.
+`server` counts only statements that ended inside `window`. `client` comes from Locust's
+stats CSV, which can trail its final console summary (in `locust_run.log`) by a fraction of
+a second of requests, so `client` may be slightly below `server`. There is no per-query
+breakdown: query `INFORMATION_SCHEMA.QUERY_HISTORY_BY_USER` with the run id as `QUERY_TAG`
+while it is fresh, split by time, since its `RESULT_LIMIT` of 10,000 applies before your
+filter. `QUERY_HISTORY_BY_WAREHOUSE` returns nothing once a created warehouse is dropped.
 
 With `--results-stage`, every file (Locust CSVs and HTML reports, API and Locust logs,
 `workload.json`, `result.json`) is copied to `@<stage>/<run_id>/` when the run ends. The
@@ -129,7 +132,7 @@ When bootstrap exits without the controller's final event, or with a different c
 
 ## Timing and sizing
 
-- A 3-minute run takes about 7 minutes: sandbox and install 15 s–1 min, warehouse creation ~2 min,
+- A 3-minute run takes about 7 minutes: sandbox and install 10 s–1 min, warehouse creation ~2 min,
   warm-up, the 1-minute baseline, ramp-up plus `run_minutes`, then measurement and teardown.
 - The API and Locust share one container. The launcher picks the memory tier from
   `concurrent_users`: 4g (2 cores) up to 50, 16g (4 cores) up to 200, 32g (6 cores) above.
