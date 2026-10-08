@@ -141,7 +141,18 @@ class WarehouseTest(unittest.TestCase):
         cfg = config.parse(base(fallback_warehouse="STD"))
         wh = warehouse.prepare(cfg, snow, set(), "RUN", quiet_events())
         warehouse.activate(cfg, snow, wh)
+        warehouse.teardown(snow, wh, quiet_events())
         self.assertEqual(["ALTER WAREHOUSE IW RESUME IF SUSPENDED"], snow.ran("^ALTER"))
+
+    def test_existing_suspended_warehouse_is_suspended_again(self) -> None:
+        states = iter(["SUSPENDED", "SUSPENDED"])
+        snow = FakeSnow().on(r"SHOW WAREHOUSES", lambda sql, params: [
+            {"NAME": "IW", "TYPE": "INTERACTIVE", "STATE": next(states, "STARTED")}])
+        cfg = config.parse(base())
+        wh = warehouse.prepare(cfg, snow, set(), "RUN", quiet_events())
+        warehouse.activate(cfg, snow, wh)
+        warehouse.teardown(snow, wh, quiet_events())
+        self.assertEqual(["ALTER WAREHOUSE IW RESUME IF SUSPENDED", "ALTER WAREHOUSE IW SUSPEND"], snow.ran("^ALTER"))
 
     def test_cleanup_skips_warehouses_it_cannot_drop(self) -> None:
         now = time.time()
@@ -187,8 +198,8 @@ class WarehouseTest(unittest.TestCase):
 
     def test_drop_only_created(self) -> None:
         snow = FakeSnow()
-        warehouse.drop(snow, warehouse.Warehouse("IW", created=False), quiet_events())
-        warehouse.drop(snow, warehouse.Warehouse("IWB_RUN_IW", created=True), quiet_events())
+        warehouse.teardown(snow, warehouse.Warehouse("IW", created=False), quiet_events())
+        warehouse.teardown(snow, warehouse.Warehouse("IWB_RUN_IW", created=True), quiet_events())
         self.assertEqual(["DROP WAREHOUSE IF EXISTS IWB_RUN_IW"], snow.ran("DROP"))
 
 
@@ -223,6 +234,27 @@ class CliTeardownTest(unittest.TestCase):
         self.assertEqual(1, len(snow.ran(r"^DROP WAREHOUSE")))
         self.assertEqual(143, result["exit_code"])
 
+    def test_missing_window_fails_instead_of_skipping_server_metrics(self) -> None:
+        load = runner.LoadResult(outcome="PASS", baseline=None, client=None, window=None)
+        with patch("iwb.runner.run_load", return_value=load):
+            code, snow, result = self.run_cli("runner.warm", None)
+        self.assertEqual(1, code)
+        self.assertIn("no measured window", result["error"])
+        self.assertNotIn("server", result)
+        self.assertEqual(1, len(snow.ran(r"^DROP WAREHOUSE")))
+
+
+class WarmTest(unittest.TestCase):
+    def test_statement_timeout_is_reported_not_fatal(self) -> None:
+        q = workload.Query("q01", "select slow", 100, Context("DB", "S"), "sql")
+        out = io.StringIO()
+        snow = FakeSnow().on(r"^select slow", ProgrammingError(msg="timeout", errno=630))
+        runner.warm(snow, warehouse.Warehouse("IW", created=True), [q], Events("RUN", out))
+        self.assertEqual(runner.WARMUP_ROUNDS, out.getvalue().count('"warning"'))
+        with self.assertRaises(ProgrammingError):
+            denied = FakeSnow().on(r"^select slow", ProgrammingError(msg="denied", errno=3001))
+            runner.warm(denied, warehouse.Warehouse("IW", created=True), [q], Events("RUN", io.StringIO()))
+
 
 class MetricsTest(unittest.TestCase):
     def test_dedupes_retries_and_counts_fallback(self) -> None:
@@ -239,6 +271,14 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual((3, 0, 1), (m["n"], m["n_failed"], m["n_fallback"]))
         self.assertEqual(7000, m["p99_ms"])
         self.assertEqual(200, m["p95_interactive_only_ms"])
+
+    def test_slow_success_on_interactive_is_not_fallback(self) -> None:
+        row = {"QUERY_ID": "s", "EXECUTION_STATUS": "SUCCESS", "WAREHOUSE_NAME": "IW", "CLUSTER_NUMBER": 1,
+               "END_TIME": datetime.fromtimestamp(1, UTC), "TOTAL_ELAPSED_TIME": 5500, "COMPILATION_TIME": 1,
+               "EXECUTION_TIME": 1, "QUEUED_MS": 2000, "QUERY_TAG": "RUN"}
+        snow = FakeSnow().on(r"QUERY_HISTORY_BY_WAREHOUSE", lambda sql, params: [row] if params[1] == 0 else [])
+        m = metrics.server_side(snow, "DB", "IW", None, "RUN", 0, 30)
+        self.assertEqual((1, 0), (m["n"], m["n_fallback"]))
 
     def test_full_slices_are_split_and_one_second_overflow_fails(self) -> None:
         limit = metrics.RESULT_LIMIT
