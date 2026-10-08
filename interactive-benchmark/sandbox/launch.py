@@ -43,6 +43,7 @@ CODE_DIR = f"{WORK_DIR}/code"
 RUN_LOG = f"{WORK_DIR}/run.log"
 BOOTSTRAP_RC = f"{WORK_DIR}/bootstrap.rc"
 CONTROLLER_PID = f"{WORK_DIR}/controller.pid"
+STOP_FILE = f"{WORK_DIR}/stop"
 RESULTS_MOUNT = "/iwb/results"
 POLL_SECONDS = 15
 MAX_POLL_FAILURES = 5
@@ -166,7 +167,7 @@ def stop(relay: _Relay) -> None:
     """Let the controller tear down before the sandbox is terminated."""
     sys.stderr.write("stopping the controller so it can drop any warehouse it created\n")
     try:
-        _sh(relay.sandbox, f"kill -TERM $(cat {CONTROLLER_PID} 2>/dev/null) 2>/dev/null || true")
+        _sh(relay.sandbox, f"touch {STOP_FILE}; kill -TERM $(cat {CONTROLLER_PID} 2>/dev/null) 2>/dev/null || true")
         deadline = time.monotonic() + STOP_GRACE.total_seconds()
         while time.monotonic() < deadline:
             if relay.poll()[0]:

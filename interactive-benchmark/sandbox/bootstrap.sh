@@ -58,8 +58,14 @@ rc=0
   --config "$CONFIG" \
   --results-dir "$WORK_DIR/results" \
   --connection "${IWB_CONNECTION:-default}" < /dev/null &
-echo "$!" > "$WORK_DIR/controller.pid"
-wait "$!" || rc=$?
+pid=$!
+echo "$pid" > "$WORK_DIR/controller.pid"
+# The launcher creates the stop file before reading controller.pid, so if it stopped while this
+# script was still installing, the check below signals the controller instead.
+if [[ -e "$WORK_DIR/stop" ]]; then
+  kill -TERM "$pid" 2>/dev/null || true
+fi
+wait "$pid" || rc=$?
 
 # Stage mounts do not support truncate(), which Locust's CSV writer needs, so copy at the end.
 if [[ -n "${IWB_RESULTS_DIR:-}" ]] && ! cp -r "$WORK_DIR/results/." "$IWB_RESULTS_DIR/"; then

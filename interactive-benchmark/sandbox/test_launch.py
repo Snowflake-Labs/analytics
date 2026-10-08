@@ -118,7 +118,8 @@ class LaunchTest(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(TimeoutError):
                 launch.run(sandbox, Path("/unused"), deadline=0)
-        self.assertTrue(any("kill -TERM" in c for c in sandbox.commands))
+        stop = next(c for c in sandbox.commands if "kill -TERM" in c)
+        self.assertLess(stop.index(f"touch {launch.STOP_FILE}"), stop.index(launch.CONTROLLER_PID))
         self.assertEqual("143\n", sandbox.files[launch.BOOTSTRAP_RC])
 
     def test_budget_is_whole_minutes_above_the_controller_worst_case(self) -> None:
