@@ -15,11 +15,16 @@ only read what that role can read.
 
 ## Usage
 
+Needs Python 3.11+ and a `connections.toml` entry for an account with Cortex Sandboxes enabled. Only PAT authentication has been tested.
+
 ```bash
-pip install snowflake-sandbox-python
-python launch.py --config run.json --connection my-conn \
+python3 -m venv .venv
+.venv/bin/pip install "snowflake-sandbox-python==0.2.2a4"
+.venv/bin/python launch.py --config run.json --connection my-conn \
   [--role MY_ROLE] [--results-stage MY_DB.MY_SCHEMA.IWB_RESULTS]
 ```
+
+Pin the SDK: it is published only as pre-releases, and the launcher works around 0.2.2a4 behaviour (see above).
 
 `run.json` follows [`iwb-config.schema.json`](../spcs-images/controller/iwb/iwb-config.schema.json):
 
@@ -50,6 +55,19 @@ The launcher prints the controller's progress events (one JSON object per line, 
 | 143, 130 | Launcher stopped by SIGTERM or SIGINT; the controller tore down first (a deadline exits 1 after the same teardown) |
 
 When bootstrap exits without the controller's final event, or with a different code, the launcher also prints the tail of the run log.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Exception from `Sandbox.create` (auth error or 403) | Cortex Sandboxes are not enabled for the account, or the role cannot create sandboxes |
+| `bootstrap exited` after a uv or pip 403 or download error | The sandbox cannot reach pypi.org |
+| Exit 30, `does not compile for this role` | Missing USAGE or SELECT on an object the query reads |
+| Exit 30, `Query IDs not found` | The role cannot see the queries: not its own, older than 7 days, or no SNOWFLAKE database access |
+| Exit 30, interactive table not attached | `warehouse.existing` does not have that table attached |
+| Exit 40 | The baseline failed (the sandbox cannot drive that many users), or the API never became ready |
+| Exit 20 | More than 1% of queries failed, for example on the 5 s interactive timeout with no `fallback_warehouse` |
+| An `IWB_*_IW` warehouse is left behind | Teardown failed; the event names it. Later runs that create a warehouse drop it once its expiry (run length + 3 h) has passed |
 
 ## Privileges for the sandbox role
 
