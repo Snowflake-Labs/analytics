@@ -9,7 +9,8 @@ The SDK's `code=`/`command=` path is not used: in snowflake-sandbox-python 0.2.2
 `role` and `idle_suspend`, runs the command before the bundle is extracted, and keeps the
 sandbox up after the command exits, so `poll()` never reports completion.
 
-Requires: pip install snowflake-sandbox-python   (Cortex Sandboxes, private preview)
+Requires: pip install "snowflake-sandbox-python==0.2.2a4"   (Cortex Sandboxes, private preview)
+See README.md in this directory.
 
 Usage:
   python launch.py --config run.json --connection my-conn [--role ROLE] [--results-stage DB.SCHEMA.STAGE]

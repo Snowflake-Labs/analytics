@@ -77,6 +77,14 @@ interactive-benchmark/spcs-images/
 - **`reports/`** — Generated benchmark reports. Each run creates a subfolder (e.g. `reports/IWB_202608271430/`) containing the final HTML report and Locust execution logs.
 - **`spcs/`** — SPCS deployment config (`config.env`) and service specs (`specs/api.yaml`, `specs/locust.yaml`). Dockerfiles and app source code live separately in `interactive-benchmark/spcs-images/`.
 
+## Running in a Cortex Sandbox (no SPCS)
+
+To run a single benchmark from a JSON config, without the skill or any SPCS deployment, use
+the Cortex Sandbox launcher: one command creates a sandbox as your role, creates the
+interactive warehouse if asked, runs the baseline and the load test, reports client and
+server-side latency, and removes everything it created. Requires Cortex Sandboxes (private
+preview) on the account. See [sandbox/README.md](sandbox/README.md).
+
 ## Running on SPCS (manual)
 
 The skill handles SPCS deployment automatically. The instructions below are for those who want to understand how the skill works behind the scenes or run the infrastructure manually without CoCo.
