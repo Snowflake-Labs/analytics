@@ -81,7 +81,9 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         result["client"] = load.client
         result["outcome"] = load.outcome
 
-        if load.outcome in ("PASS", "BENCHMARK_FAIL") and load.window:
+        if load.outcome in ("PASS", "BENCHMARK_FAIL"):
+            if not load.window:
+                raise RuntimeError("locust_run.log has no measured window; server-side metrics cannot be computed")
             events.emit("MEASURE", "started")
             start, end = load.window
             result["window"] = {"start": start, "end": end}
@@ -106,7 +108,7 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
     finally:
         if snow is not None and wh is not None:
             try:
-                warehouse.drop(snow, wh, events)
+                warehouse.teardown(snow, wh, events)
             except Exception as exc:  # noqa: BLE001
                 events.emit("TEARDOWN", "failed", warehouse=wh.name, error=str(exc))
                 exit_code = exit_code or EXIT_CRASH

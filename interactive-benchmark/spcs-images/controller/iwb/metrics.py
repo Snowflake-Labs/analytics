@@ -7,13 +7,11 @@ from typing import Any
 
 from snowflake.connector.errors import DatabaseError
 
-from iwb.snow import Snow
+from iwb.snow import STATEMENT_TIMEOUT, Snow
 from iwb.workload import ident
 
 SLICE_SECONDS = 60
 RESULT_LIMIT = 10000
-INTERACTIVE_TIMEOUT_MS = 5000
-STATEMENT_TIMEOUT = 630
 
 COLUMNS = (
     "QUERY_ID, EXECUTION_STATUS, WAREHOUSE_NAME, CLUSTER_NUMBER, END_TIME, TOTAL_ELAPSED_TIME, "
@@ -85,8 +83,7 @@ def server_side(snow: Snow, database: str, warehouse: str, fallback: str | None,
     queries = [r for r in latest.values() if start <= r["END_TIME"].timestamp() < end]
     elapsed = [r["TOTAL_ELAPSED_TIME"] for r in queries]
     succeeded = [r for r in queries if r["EXECUTION_STATUS"] == "SUCCESS"]
-    on_interactive = [r for r in succeeded if r["TOTAL_ELAPSED_TIME"] <= INTERACTIVE_TIMEOUT_MS
-                      and r["WAREHOUSE_NAME"].upper() == warehouse.upper()]
+    on_interactive = [r for r in succeeded if r["WAREHOUSE_NAME"].upper() == warehouse.upper()]
 
     def avg(key: str) -> float | None:
         return sum(r[key] for r in queries) / len(queries) if queries else None

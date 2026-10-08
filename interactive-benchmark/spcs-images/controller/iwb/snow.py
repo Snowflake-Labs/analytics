@@ -8,6 +8,8 @@ from typing import Any, Protocol
 import snowflake.connector
 from snowflake.connector import DictCursor
 
+STATEMENT_TIMEOUT = 630  # 000630: includes the interactive warehouse's 5 s limit
+
 
 class Snow(Protocol):
     def rows(self, sql: str, params: tuple | None = None) -> list[dict[str, Any]]: ...

@@ -18,7 +18,9 @@ from pathlib import Path
 from iwb.budget import API_READY_TIMEOUT_SECONDS, locust_timeout_seconds
 from iwb.config import Config
 from iwb.events import Events
-from iwb.snow import Snow
+from snowflake.connector.errors import DatabaseError
+
+from iwb.snow import STATEMENT_TIMEOUT, Snow
 from iwb.warehouse import Warehouse
 from iwb.workload import Query, ident, use_context
 
@@ -46,7 +48,14 @@ def warm(snow: Snow, wh: Warehouse, queries: list[Query], events: Events) -> Non
         for q in queries:
             use_context(snow, q.context)
             t0 = time.perf_counter()
-            snow.execute(q.sql)
+            try:
+                snow.execute(q.sql)
+            except DatabaseError as exc:
+                # A cold first execution can exceed the interactive timeout; the load test counts
+                # such statements against the failure gate, so warm-up only reports them.
+                if exc.errno != STATEMENT_TIMEOUT:
+                    raise
+                events.emit("WARM", "warning", round=round_no, query=q.id, error=exc.msg)
             slowest_ms = max(slowest_ms, round((time.perf_counter() - t0) * 1000))
         events.emit("WARM", "progress", round=round_no, of=WARMUP_ROUNDS, slowest_ms=slowest_ms)
 

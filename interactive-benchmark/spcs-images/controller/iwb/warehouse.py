@@ -26,6 +26,7 @@ class Warehouse:
     name: str
     created: bool
     tables: set[str] = field(default_factory=set)
+    resumed: bool = False
 
 
 def _show(snow: Snow, name: str) -> dict | None:
@@ -86,6 +87,8 @@ def prepare(cfg: Config, snow: Snow, tables: set[str], run_id: str, events: Even
 
 
 def activate(cfg: Config, snow: Snow, wh: Warehouse) -> None:
+    row = _show(snow, wh.name)
+    wh.resumed = bool(row) and row.get("STATE") == "SUSPENDED"
     snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} RESUME IF SUSPENDED")
     if cfg.fallback_warehouse and wh.created:
         snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} SET FALLBACK_WAREHOUSE = {ident(cfg.fallback_warehouse)}")
@@ -138,7 +141,11 @@ def ensure_compiles(snow: Snow, wh: Warehouse, queries: list[Query], events: Eve
     wait_started(snow, wh.name)
 
 
-def drop(snow: Snow, wh: Warehouse, events: Events) -> None:
+def teardown(snow: Snow, wh: Warehouse, events: Events) -> None:
+    """Drop a created warehouse; suspend an existing one again if this run resumed it."""
     if wh.created:
         snow.execute(f"DROP WAREHOUSE IF EXISTS {ident(wh.name)}")
         events.emit("TEARDOWN", "completed", dropped=wh.name)
+    elif wh.resumed:
+        snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} SUSPEND")
+        events.emit("TEARDOWN", "completed", suspended=wh.name)

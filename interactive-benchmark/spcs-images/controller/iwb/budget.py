@@ -2,8 +2,10 @@
 
 STARTED_TIMEOUT_SECONDS = 900
 API_READY_TIMEOUT_SECONDS = 600
-# Validation, compile checks, warm-up, measurement and teardown.
+# Validation, compile checks, warm-up and teardown.
 OTHER_STEPS_SECONDS = 900
+# Reading query history grows with the window: up to a few history queries per minute of run.
+MEASURE_SECONDS_PER_RUN_SECOND = 0.5
 
 
 def run_seconds(run_minutes: float) -> int:
@@ -17,4 +19,5 @@ def locust_timeout_seconds(run_secs: int, users: int) -> int:
 
 def worst_case_seconds(run_secs: int, users: int) -> int:
     # The warehouse is waited on twice: after resume and after attaching tables.
-    return 2 * STARTED_TIMEOUT_SECONDS + locust_timeout_seconds(run_secs, users) + OTHER_STEPS_SECONDS
+    return (2 * STARTED_TIMEOUT_SECONDS + locust_timeout_seconds(run_secs, users) + OTHER_STEPS_SECONDS
+            + round(MEASURE_SECONDS_PER_RUN_SECOND * run_secs))
