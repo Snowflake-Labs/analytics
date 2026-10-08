@@ -81,7 +81,8 @@ def server_side(snow: Snow, database: str, warehouse: str, fallback: str | None,
         prev = latest.get(row["QUERY_ID"])
         if prev is None or row["END_TIME"] > prev["END_TIME"]:
             latest[row["QUERY_ID"]] = row
-    queries = list(latest.values())
+    # Slices are whole seconds; keep only statements that ended inside the exact Locust window.
+    queries = [r for r in latest.values() if start <= r["END_TIME"].timestamp() < end]
     elapsed = [r["TOTAL_ELAPSED_TIME"] for r in queries]
     succeeded = [r for r in queries if r["EXECUTION_STATUS"] == "SUCCESS"]
     on_interactive = [r for r in succeeded if r["TOTAL_ELAPSED_TIME"] <= INTERACTIVE_TIMEOUT_MS
