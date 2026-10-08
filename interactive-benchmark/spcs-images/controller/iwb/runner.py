@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from iwb.budget import API_READY_TIMEOUT_SECONDS, locust_timeout_seconds
 from iwb.config import Config
 from iwb.events import Events
 from iwb.snow import Snow
@@ -22,7 +23,6 @@ from iwb.warehouse import Warehouse
 from iwb.workload import Query, ident, use_context
 
 WARMUP_ROUNDS = 3
-API_READY_TIMEOUT_SECONDS = 600
 STOP_GRACE_SECONDS = 30
 # Settings the controller owns; a stray value in the host environment must not change the gates.
 CONTROLLED_ENV_PREFIXES = ("BASELINE_", "BENCHMARK_MAX_", "POOL_", "LOCUST_", "API_READY_")
@@ -32,27 +32,11 @@ LOCUST_LOG_TS = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(\d{3})\]"
 
 
 @dataclass(frozen=True)
-class Paths:
-    api_python: str
-    api_server: str
-    locust_entrypoint: str
-
-    @staticmethod
-    def from_env() -> Paths:
-        return Paths(
-            api_python=os.environ.get("IWB_API_PYTHON", "/opt/venvs/api/bin/python"),
-            api_server=os.environ.get("IWB_API_SERVER", "/app/api/server.py"),
-            locust_entrypoint=os.environ.get("IWB_LOCUST_ENTRYPOINT", "/app/locust/entrypoint.sh"),
-        )
-
-
-@dataclass(frozen=True)
 class LoadResult:
     outcome: str
     baseline: dict | None
     client: dict | None
-    window_start: float | None
-    window_end: float | None
+    window: tuple[float, float] | None
 
 
 def warm(snow: Snow, wh: Warehouse, queries: list[Query], events: Events) -> None:
@@ -149,9 +133,10 @@ def run_load(
     connection_name: str,
     results_dir: Path,
     events: Events,
-    paths: Paths | None = None,
 ) -> LoadResult:
-    paths = paths or Paths.from_env()
+    api_python = os.environ.get("IWB_API_PYTHON", "/opt/venvs/api/bin/python")
+    api_server = os.environ.get("IWB_API_SERVER", "/app/api/server.py")
+    locust_entrypoint = os.environ.get("IWB_LOCUST_ENTRYPOINT", "/app/locust/entrypoint.sh")
     workload_file = results_dir / "workload.json"
     workload_file.write_text(json.dumps({"queries": [
         {"id": q.id, "sql": q.sql, "weight": q.weight,
@@ -184,20 +169,19 @@ def run_load(
         "BENCHMARK_EXIT_AFTER_RUN": "1",
         "BENCHMARK_RESULTS_DIR": str(results_dir),
     })
-    # Baseline + benchmark each add at most ~users/spawn seconds of ramp-up.
-    locust_timeout = API_READY_TIMEOUT_SECONDS + 60 + cfg.run_seconds + 2 * cfg.concurrent_users + 600
+    locust_timeout = locust_timeout_seconds(cfg.run_seconds, cfg.concurrent_users)
 
     events.emit("LOAD", "started", users=cfg.concurrent_users, run_seconds=cfg.run_seconds,
                 api_workers=workers, api_pool_size=pool_size)
     with (results_dir / "api.log").open("w") as api_log, (results_dir / "locust.log").open("w") as locust_log:
         api = subprocess.Popen(
-            [paths.api_python, paths.api_server], env=api_env, start_new_session=True,
-            cwd=str(Path(paths.api_server).parent), stdout=api_log, stderr=subprocess.STDOUT,
+            [api_python, api_server], env=api_env, start_new_session=True,
+            cwd=str(Path(api_server).parent), stdout=api_log, stderr=subprocess.STDOUT,
         )
         locust = None
         try:
             locust = subprocess.Popen(
-                ["bash", paths.locust_entrypoint], env=locust_env, start_new_session=True,
+                ["bash", locust_entrypoint], env=locust_env, start_new_session=True,
                 stdout=locust_log, stderr=subprocess.STDOUT,
             )
             try:
@@ -210,13 +194,11 @@ def run_load(
             _stop(api)
 
     outcome = LOCUST_EXIT.get(rc, f"LOCUST_EXIT_{rc}")
-    window = measured_window(results_dir / "locust_run.log")
     result = LoadResult(
         outcome=outcome,
         baseline=parse_stats_row(results_dir / "baseline_stats_stats.csv", "/api/run/baseline"),
         client=parse_stats_row(results_dir / "locust_stats_stats.csv", "/api/run/interactive"),
-        window_start=window[0] if window else None,
-        window_end=window[1] if window else None,
+        window=measured_window(results_dir / "locust_run.log"),
     )
     events.emit("LOAD", "completed" if outcome == "PASS" else "failed", outcome=outcome,
                 client=result.client, baseline=result.baseline)

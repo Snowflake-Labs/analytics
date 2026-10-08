@@ -1,5 +1,5 @@
 import re
-from typing import Any, Callable
+from typing import Any
 
 
 class FakeSnow:
@@ -19,7 +19,7 @@ class FakeSnow:
             if pattern.search(sql):
                 if isinstance(result, Exception):
                     raise result
-                if isinstance(result, Callable):
+                if callable(result):
                     return result(sql, params)
                 return result
         return []

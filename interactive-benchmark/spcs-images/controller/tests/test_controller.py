@@ -235,7 +235,7 @@ class MetricsTest(unittest.TestCase):
                    {**row("x", "IW", 1), "QUERY_TAG": "OTHER"}, row("ramp", "IW", 9000, end=0.3)],
             "STD": [row("c", "STD", 7000, end=2)],
         }[params[0]] if params[1] == 0 else [])
-        m = metrics.server_side(snow, "DB", "IW", "STD", "RUN", 0.6, 30, quiet_events())
+        m = metrics.server_side(snow, "DB", "IW", "STD", "RUN", 0.6, 30)
         self.assertEqual((3, 0, 1), (m["n"], m["n_failed"], m["n_fallback"]))
         self.assertEqual(7000, m["p99_ms"])
         self.assertEqual(200, m["p95_interactive_only_ms"])
@@ -249,8 +249,11 @@ class MetricsTest(unittest.TestCase):
                 return [{}] * limit
             return [{"QUERY_ID": f"{start}", "QUERY_TAG": "RUN"}]
 
-        rows = metrics._collect(FakeSnow().on("QUERY_HISTORY", history), "DB", "IW", "RUN", 0, 60)
-        self.assertEqual(4, len(rows))
+        snow = FakeSnow().on("QUERY_HISTORY", history)
+        rows = metrics._collect(snow, "DB", "IW", "RUN", 0, 120)
+        self.assertEqual(8, len(rows))
+        # 60 s and 30 s come back full; the remaining window is read in 15 s slices directly.
+        self.assertEqual(10, len(snow.ran("QUERY_HISTORY")))
 
         always_full = FakeSnow().on("QUERY_HISTORY", lambda sql, params: [{}] * limit)
         with self.assertRaisesRegex(RuntimeError, "within one second"):
@@ -267,7 +270,7 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(4, len(rows))
 
         timeout = ProgrammingError(msg="timeout", errno=630)
-        with self.assertRaises(ProgrammingError):
+        with self.assertRaisesRegex(RuntimeError, "statement timeout"):
             metrics._collect(FakeSnow().on("QUERY_HISTORY", timeout), "DB", "IW", "RUN", 0, 4)
         with self.assertRaises(ProgrammingError):
             metrics._collect(FakeSnow().on("QUERY_HISTORY", ProgrammingError(msg="denied", errno=3001)),

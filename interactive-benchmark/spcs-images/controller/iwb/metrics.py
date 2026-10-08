@@ -7,7 +7,6 @@ from typing import Any
 
 from snowflake.connector.errors import DatabaseError
 
-from iwb.events import Events
 from iwb.snow import Snow
 from iwb.workload import ident
 
@@ -30,16 +29,12 @@ def percentile(values: list[float], pct: float) -> float | None:
     return ordered[max(0, math.ceil(pct / 100 * len(ordered)) - 1)]
 
 
-def _slice(snow: Snow, database: str, warehouse: str, tag: str, start: int, end: int) -> list[dict[str, Any]]:
-    """History rows ending in [start, end); halves the range while the result may be truncated.
+def _fetch(snow: Snow, database: str, warehouse: str, start: int, end: int) -> list[dict[str, Any]] | None:
+    """History rows ending in [start, end), or None if the result may be incomplete.
 
     RESULT_LIMIT applies before the QUERY_TAG filter, so a full result means rows were dropped. The
     session is on the interactive warehouse, so a large slice can also hit its statement timeout.
     """
-    def split() -> list[dict[str, Any]]:
-        mid = (start + end) // 2
-        return _slice(snow, database, warehouse, tag, start, mid) + _slice(snow, database, warehouse, tag, mid, end)
-
     try:
         rows = snow.rows(
             f"SELECT {COLUMNS}, QUERY_TAG FROM TABLE({ident(database)}.INFORMATION_SCHEMA."
@@ -48,31 +43,36 @@ def _slice(snow: Snow, database: str, warehouse: str, tag: str, start: int, end:
             (warehouse, start, end, RESULT_LIMIT),
         )
     except DatabaseError as exc:
-        if exc.errno != STATEMENT_TIMEOUT or end - start <= 1:
+        if exc.errno != STATEMENT_TIMEOUT:
             raise
-        return split()
-    if len(rows) >= RESULT_LIMIT:
-        if end - start <= 1:
-            raise RuntimeError(
-                f"More than {RESULT_LIMIT} queries ended on {warehouse} within one second at {start}; "
-                "server-side metrics would be incomplete"
-            )
-        return split()
-    return [r for r in rows if r["QUERY_TAG"] == tag]
+        return None
+    return rows if len(rows) < RESULT_LIMIT else None
 
 
 def _collect(snow: Snow, database: str, warehouse: str, tag: str, start: float, end: float) -> list[dict[str, Any]]:
+    """Read the window in slices, halving the slice length (for the rest of the window too) while a
+    slice comes back incomplete."""
     rows: list[dict[str, Any]] = []
-    t = math.floor(start)
-    while t < end:
-        slice_end = min(t + SLICE_SECONDS, math.ceil(end))
-        rows.extend(_slice(snow, database, warehouse, tag, t, slice_end))
+    step = SLICE_SECONDS
+    t, stop = math.floor(start), math.ceil(end)
+    while t < stop:
+        slice_end = min(t + step, stop)
+        chunk = _fetch(snow, database, warehouse, t, slice_end)
+        if chunk is None:
+            if slice_end - t <= 1:
+                raise RuntimeError(
+                    f"More than {RESULT_LIMIT} queries ended on {warehouse} within one second at {t}, or that "
+                    "second's history hit the statement timeout; server-side metrics would be incomplete"
+                )
+            step = max(1, (slice_end - t) // 2)
+            continue
+        rows.extend(r for r in chunk if r["QUERY_TAG"] == tag)
         t = slice_end
     return rows
 
 
 def server_side(snow: Snow, database: str, warehouse: str, fallback: str | None, tag: str,
-                start: float, end: float, events: Events) -> dict[str, Any]:
+                start: float, end: float) -> dict[str, Any]:
     rows = _collect(snow, database, warehouse, tag, start, end)
     if fallback:
         rows += _collect(snow, database, fallback, tag, start, end)

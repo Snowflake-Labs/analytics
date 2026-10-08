@@ -8,16 +8,16 @@ from dataclasses import dataclass, field
 
 from snowflake.connector.errors import ProgrammingError
 
+from iwb.budget import STARTED_TIMEOUT_SECONDS
 from iwb.config import Config, ConfigError, Context
 from iwb.events import Events
 from iwb.snow import Snow
-from iwb.workload import Query, ident, use_context
+from iwb.workload import Query, explain_plan, ident, qualified
 
 TABLE_NOT_BOUND = 10402  # 010402: Interactive table {0} needs to be added to current warehouse.
 NOT_BOUND_TABLE = re.compile(r"Interactive table (\S+) needs to be added")
 STALE_PREFIX = "IWB_"
 COMMENT_PREFIX = "iwb:"
-STARTED_TIMEOUT_SECONDS = 900
 MAX_ATTACH_ROUNDS = 100  # an interactive warehouse attaches at most 100 tables
 
 
@@ -110,17 +110,16 @@ def _qualify(name: str, context: Context) -> str:
         return name
     if len(parts) == 2:
         return f"{ident(context.database)}.{name}"
-    return f"{ident(context.database)}.{ident(context.schema)}.{name}"
+    return f"{qualified(context)}.{name}"
 
 
 def ensure_compiles(snow: Snow, wh: Warehouse, queries: list[Query], events: Events) -> None:
     """Compile each query on the interactive warehouse; attach any interactive table it names."""
     snow.execute(f"USE WAREHOUSE {ident(wh.name)}")
     for q in queries:
-        use_context(snow, q.context)
         for _ in range(MAX_ATTACH_ROUNDS):
             try:
-                snow.rows("SELECT SYSTEM$EXPLAIN_PLAN_JSON(%s) AS PLAN", (q.sql,))
+                explain_plan(snow, q)
                 break
             except ProgrammingError as exc:
                 match = NOT_BOUND_TABLE.search(exc.msg or "")

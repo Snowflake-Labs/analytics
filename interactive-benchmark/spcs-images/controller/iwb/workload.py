@@ -119,6 +119,11 @@ def use_context(snow: Snow, context: Context) -> None:
     snow.execute(f"USE SCHEMA {qualified(context)}")
 
 
+def explain_plan(snow: Snow, q: Query) -> dict:
+    use_context(snow, q.context)
+    return json.loads(snow.rows("SELECT SYSTEM$EXPLAIN_PLAN_JSON(%s) AS PLAN", (q.sql,))[0]["PLAN"])
+
+
 def discover_tables(snow: Snow, queries: list[Query]) -> set[str]:
     """Compile every query as the caller (proving access) and collect the tables its plan scans.
 
@@ -128,8 +133,7 @@ def discover_tables(snow: Snow, queries: list[Query]) -> set[str]:
     tables: set[str] = set()
     for q in queries:
         try:
-            use_context(snow, q.context)
-            plan = json.loads(snow.rows("SELECT SYSTEM$EXPLAIN_PLAN_JSON(%s) AS PLAN", (q.sql,))[0]["PLAN"])
+            plan = explain_plan(snow, q)
         except ProgrammingError as exc:
             raise ConfigError(f"Query {q.id} ({q.source}) does not compile for this role: {exc.msg}") from exc
         for step in plan.get("Operations", []):
