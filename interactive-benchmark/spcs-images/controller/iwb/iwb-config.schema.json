@@ -166,6 +166,11 @@
       "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$",
       "description": "Optional standard warehouse for statements that hit the 5 s interactive timeout. Without it those statements fail and count against the failure gate."
     },
+    "lookup_warehouse": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$",
+      "description": "Standard warehouse used only to look up workload.query_ids in query history. Needed when the user has no DEFAULT_WAREHOUSE; not allowed with workload.queries."
+    },
     "concurrent_users": {
       "type": "integer",
       "minimum": 1,

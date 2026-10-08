@@ -52,6 +52,7 @@ class Config:
     existing_warehouse: str | None
     new_warehouse: NewWarehouse | None
     fallback_warehouse: str | None
+    lookup_warehouse: str | None
     concurrent_users: int
     run_minutes: float
 
@@ -98,6 +99,8 @@ def parse(raw: dict) -> Config:
             raise ConfigError("query_ids: give weight_pct for every query ID or for none")
         if weighted:
             _check_weights(weighted, "query_ids")
+    if sql_entries and "lookup_warehouse" in raw:
+        raise ConfigError("lookup_warehouse is only used with workload.query_ids")
 
     warehouse = raw["warehouse"]
     new_warehouse = None
@@ -116,6 +119,7 @@ def parse(raw: dict) -> Config:
         existing_warehouse=warehouse.get("existing"),
         new_warehouse=new_warehouse,
         fallback_warehouse=raw.get("fallback_warehouse"),
+        lookup_warehouse=raw.get("lookup_warehouse"),
         concurrent_users=raw["concurrent_users"],
         run_minutes=float(raw["run_minutes"]),
     )
