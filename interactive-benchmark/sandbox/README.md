@@ -47,7 +47,8 @@ behaviour (see [How it works](#how-it-works)).
 - `workload`: either `queries` (SQL texts with `weight_pct` summing to 100; each may override
   `context`) or `query_ids` (IDs from query history: plain strings for equal weights, or
   `{"query_id": ..., "weight_pct": ...}` for every ID, summing to 100).
-- `warehouse`: `create` (dropped when the run ends) or `{"existing": "MY_IW"}` (left as is).
+- `warehouse`: `create` (dropped when the run ends) or `{"existing": "MY_IW"}` (never altered
+  or dropped; if it was suspended, it is resumed for the run and suspended again afterwards).
 - `fallback_warehouse` (optional): a standard warehouse that re-runs statements hitting the
   5 s interactive timeout. Without it those statements fail and count against the 1% failure
   gate, which is what you want when measuring the interactive warehouse alone.
@@ -113,7 +114,8 @@ When bootstrap exits without the controller's final event, or with a different c
 - `warehouse.existing`: USAGE on that interactive warehouse.
 - `warehouse.create`: `CREATE WAREHOUSE` on the account.
 - `fallback_warehouse`: USAGE on it.
-- `workload.query_ids`: the queries must be visible to the role. Own queries from the last 7 days work; older ones need SNOWFLAKE database access.
+- `workload.query_ids`: the queries must be visible to the role. Without SNOWFLAKE database
+  access, only the role's own queries among its latest 10,000 (within 7 days) can be found.
 - `--results-stage`: READ and WRITE on the stage.
 
 ## Troubleshooting
