@@ -8,6 +8,7 @@ import sys
 import tempfile
 import types
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -72,7 +73,6 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual({"https://pypi.org/simple"}, registries, project)
 
     def test_zip_round_trips_bundle(self) -> None:
-        import io, zipfile
         config = Path(tempfile.mkdtemp()) / "run.json"
         config.write_text('{"run_minutes": 1}')
         bundle = launch.build_bundle(config)
@@ -121,10 +121,10 @@ class LaunchTest(unittest.TestCase):
         self.assertTrue(any("kill -TERM" in c for c in sandbox.commands))
         self.assertEqual("143\n", sandbox.files[launch.BOOTSTRAP_RC])
 
-    def test_budget_is_whole_minutes_above_the_run(self) -> None:
-        budget = launch.run_budget({"run_minutes": 1.5, "concurrent_users": 10})
-        self.assertEqual(0, budget.total_seconds() % 60)
-        self.assertGreater(budget, launch.RUN_MARGIN + launch.timedelta(minutes=1.5))
+    def test_budget_is_whole_minutes_above_the_controller_worst_case(self) -> None:
+        run_time = launch.run_budget({"run_minutes": 1.5, "concurrent_users": 10})
+        self.assertEqual(0, run_time.total_seconds() % 60)
+        self.assertGreater(run_time.total_seconds(), launch.budget.worst_case_seconds(90, 10))
 
     def test_memory_tier_by_users(self) -> None:
         self.assertEqual(["4g", "16g", "32g"], [launch.memory_tier(u) for u in (50, 200, 500)])
