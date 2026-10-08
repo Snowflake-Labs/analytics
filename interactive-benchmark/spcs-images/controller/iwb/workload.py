@@ -14,6 +14,11 @@ from iwb.snow import Snow
 PLAIN_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 HISTORY_COLUMNS = "QUERY_ID, QUERY_TEXT, DATABASE_NAME, SCHEMA_NAME, QUERY_TYPE, EXECUTION_STATUS"
 NOT_FOUND_OR_UNAUTHORIZED = 2003
+NO_ACTIVE_WAREHOUSE = 606
+NEEDS_WAREHOUSE = (
+    "workload.query_ids needs a warehouse to read query history: set lookup_warehouse in the config "
+    "(a standard warehouse this role can use), or a DEFAULT_WAREHOUSE on your user"
+)
 
 
 def ident(name: str) -> str:
@@ -36,8 +41,25 @@ class Query:
     source: str
 
 
-def _history(snow: Snow, query_ids: list[str], context: Context) -> dict[str, dict]:
-    """Look up query IDs in ACCOUNT_USAGE (365 days), then INFORMATION_SCHEMA (7 days, fresh)."""
+def _history(snow: Snow, query_ids: list[str], context: Context, lookup_warehouse: str | None) -> dict[str, dict]:
+    """Look up query IDs in ACCOUNT_USAGE (365 days), then INFORMATION_SCHEMA (7 days, fresh).
+
+    Both need a running warehouse, and an interactive one would hit its 5 s timeout on these scans.
+    """
+    if lookup_warehouse:
+        try:
+            snow.execute(f"USE WAREHOUSE {ident(lookup_warehouse)}")
+        except ProgrammingError as exc:
+            raise ConfigError(f"lookup_warehouse {lookup_warehouse} cannot be used: {exc.msg}") from exc
+    try:
+        return _lookup(snow, query_ids, context)
+    except ProgrammingError as exc:
+        if exc.errno == NO_ACTIVE_WAREHOUSE:
+            raise ConfigError(NEEDS_WAREHOUSE) from exc
+        raise
+
+
+def _lookup(snow: Snow, query_ids: list[str], context: Context) -> dict[str, dict]:
     found: dict[str, dict] = {}
     placeholders = ", ".join(["%s"] * len(query_ids))
     try:
@@ -65,7 +87,7 @@ def _history(snow: Snow, query_ids: list[str], context: Context) -> dict[str, di
 
 def _from_query_ids(cfg: Config, snow: Snow) -> list[Query]:
     ids = [e.query_id for e in cfg.query_id_entries]
-    history = _history(snow, sorted(set(ids)), cfg.context)
+    history = _history(snow, sorted(set(ids)), cfg.context, cfg.lookup_warehouse)
     missing = sorted(set(ids) - history.keys())
     if missing:
         raise ConfigError(

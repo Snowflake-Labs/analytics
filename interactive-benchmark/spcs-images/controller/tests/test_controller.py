@@ -85,6 +85,22 @@ class WorkloadTest(unittest.TestCase):
         self.assertEqual(Context("HDB", "HS"), queries[0].context)
         self.assertEqual(QID1, queries[0].source)
 
+    def test_query_ids_use_lookup_warehouse(self) -> None:
+        snow = FakeSnow().on(r"ACCOUNT_USAGE", [history_row(QID1)])
+        cfg = config.parse(base(workload={"query_ids": [QID1]}, lookup_warehouse="LOOKUP_WH"))
+        workload.resolve(cfg, snow)
+        self.assertEqual("USE WAREHOUSE LOOKUP_WH", snow.statements[0][0])
+
+    def test_query_ids_without_any_warehouse_ask_for_one(self) -> None:
+        snow = FakeSnow().on(r"ACCOUNT_USAGE", ProgrammingError(msg="No active warehouse", errno=606))
+        cfg = config.parse(base(workload={"query_ids": [QID1]}))
+        with self.assertRaisesRegex(ConfigError, "set lookup_warehouse .* or a DEFAULT_WAREHOUSE"):
+            workload.resolve(cfg, snow)
+
+    def test_lookup_warehouse_requires_query_ids(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "only used with workload.query_ids"):
+            config.parse(base(lookup_warehouse="LOOKUP_WH"))
+
     def test_query_id_errors(self) -> None:
         cases = {
             "not found": [history_row(QID1)],
