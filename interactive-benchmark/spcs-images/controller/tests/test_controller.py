@@ -3,6 +3,7 @@ import json
 import tempfile
 import time
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -225,16 +226,16 @@ class CliTeardownTest(unittest.TestCase):
 
 class MetricsTest(unittest.TestCase):
     def test_dedupes_retries_and_counts_fallback(self) -> None:
-        def row(qid, wh, ms, status="SUCCESS", end=1):
+        def row(qid, wh, ms, status="SUCCESS", end=1.0):
             return {"QUERY_ID": qid, "EXECUTION_STATUS": status, "WAREHOUSE_NAME": wh, "CLUSTER_NUMBER": 1,
-                    "END_TIME": end, "TOTAL_ELAPSED_TIME": ms, "COMPILATION_TIME": 1, "EXECUTION_TIME": 1,
+                    "END_TIME": datetime.fromtimestamp(end, UTC), "TOTAL_ELAPSED_TIME": ms, "COMPILATION_TIME": 1, "EXECUTION_TIME": 1,
                     "QUEUED_MS": 0, "QUERY_TAG": "RUN"}
         snow = FakeSnow().on(r"QUERY_HISTORY_BY_WAREHOUSE", lambda sql, params: {
             "IW": [row("a", "IW", 100), row("b", "IW", 200), row("c", "IW", 5000, "FAILED_WITH_ERROR"),
-                   {**row("x", "IW", 1), "QUERY_TAG": "OTHER"}],
+                   {**row("x", "IW", 1), "QUERY_TAG": "OTHER"}, row("ramp", "IW", 9000, end=0.3)],
             "STD": [row("c", "STD", 7000, end=2)],
         }[params[0]] if params[1] == 0 else [])
-        m = metrics.server_side(snow, "DB", "IW", "STD", "RUN", 0, 30, quiet_events())
+        m = metrics.server_side(snow, "DB", "IW", "STD", "RUN", 0.6, 30, quiet_events())
         self.assertEqual((3, 0, 1), (m["n"], m["n_failed"], m["n_fallback"]))
         self.assertEqual(7000, m["p99_ms"])
         self.assertEqual(200, m["p95_interactive_only_ms"])
