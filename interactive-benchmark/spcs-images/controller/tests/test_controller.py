@@ -255,6 +255,23 @@ class MetricsTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "within one second"):
             metrics._collect(always_full, "DB", "IW", "RUN", 0, 4)
 
+    def test_timed_out_slices_are_split_and_one_second_timeout_raises(self) -> None:
+        def history(sql, params):
+            start, end = params[1], params[2]
+            if end - start > 15:
+                raise ProgrammingError(msg="Statement reached its statement or warehouse timeout", errno=630)
+            return [{"QUERY_ID": f"{start}", "QUERY_TAG": "RUN"}]
+
+        rows = metrics._collect(FakeSnow().on("QUERY_HISTORY", history), "DB", "IW", "RUN", 0, 60)
+        self.assertEqual(4, len(rows))
+
+        timeout = ProgrammingError(msg="timeout", errno=630)
+        with self.assertRaises(ProgrammingError):
+            metrics._collect(FakeSnow().on("QUERY_HISTORY", timeout), "DB", "IW", "RUN", 0, 4)
+        with self.assertRaises(ProgrammingError):
+            metrics._collect(FakeSnow().on("QUERY_HISTORY", ProgrammingError(msg="denied", errno=3001)),
+                             "DB", "IW", "RUN", 0, 60)
+
     def test_percentile_nearest_rank(self) -> None:
         self.assertEqual(95, metrics.percentile(list(range(1, 101)), 95))
         self.assertIsNone(metrics.percentile([], 50))
