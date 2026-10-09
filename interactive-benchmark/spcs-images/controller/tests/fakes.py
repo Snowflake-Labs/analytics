@@ -31,6 +31,10 @@ class FakeSnow:
         self._answer(sql, params)
         return "qid"
 
+    def monitoring(self, path: str) -> dict[str, Any]:
+        """Unmatched paths answer like the API for an unknown query: success with no rows."""
+        return self._answer(path, None) or {"success": True, "data": {"queries": []}}
+
     def close(self) -> None:
         pass
 
