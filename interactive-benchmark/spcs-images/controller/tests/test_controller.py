@@ -67,6 +67,11 @@ class ConfigTest(unittest.TestCase):
             config.parse(raw)
 
 
+def monitored(qid, text="select 1", status="SUCCESS", db="HDB", schema="HS"):
+    return {"success": True, "data": {"queries": [
+        {"id": qid, "sqlText": text, "databaseName": db, "schemaName": schema, "status": status}]}}
+
+
 class WorkloadTest(unittest.TestCase):
     def test_sql_entries_get_ids_and_duplicates_merge(self) -> None:
         cfg = config.parse(base(workload={"queries": [
@@ -75,43 +80,48 @@ class WorkloadTest(unittest.TestCase):
         queries = workload.resolve(cfg, FakeSnow())
         self.assertEqual([("q01", 50.0), ("q03", 50.0)], [(q.id, q.weight) for q in queries])
 
-    def test_query_ids_fall_back_to_information_schema(self) -> None:
+    def test_query_ids_resolve_through_monitoring_without_a_warehouse(self) -> None:
         snow = (FakeSnow()
-                .on(r"ACCOUNT_USAGE", ProgrammingError(msg="no access", errno=2003))
-                .on(r"QUERY_HISTORY_BY_USER", [history_row(QID1), history_row(QID2, text="select 2")]))
+                .on(rf"uuid={QID1}&stmt_type=SELECT", monitored(QID1))
+                .on(rf"uuid={QID2}&stmt_type=SELECT", monitored(QID2, text="select 2")))
         cfg = config.parse(base(workload={"query_ids": [QID1, QID2]}))
         queries = workload.resolve(cfg, snow)
         self.assertEqual([50.0, 50.0], [q.weight for q in queries])
         self.assertEqual(Context("HDB", "HS"), queries[0].context)
         self.assertEqual(QID1, queries[0].source)
+        self.assertEqual([], snow.ran("WAREHOUSE|ACCOUNT_USAGE"))
 
-    def test_query_ids_use_lookup_warehouse(self) -> None:
+    def test_query_id_errors(self) -> None:
+        cases = {
+            "not found .* last 14 days": FakeSnow().on(rf"uuid={QID1}&stmt_type=SELECT", monitored(QID1)),
+            f"{QID2} is not a SELECT$": (FakeSnow().on(rf"uuid={QID1}&stmt_type=SELECT", monitored(QID1))
+                                         .on(rf"/monitoring/queries/{QID2}", monitored(QID2))),
+            "did not succeed": (FakeSnow().on(rf"uuid={QID1}&stmt_type=SELECT", monitored(QID1, status="FAILED_WITH_ERROR"))
+                                .on(rf"uuid={QID2}&stmt_type=SELECT", monitored(QID2))),
+        }
+        for message, snow in cases.items():
+            cfg = config.parse(base(workload={"query_ids": [QID1, QID2]}))
+            with self.subTest(message), self.assertRaisesRegex(ConfigError, message):
+                workload.resolve(cfg, snow)
+
+    def test_unexpected_monitoring_response_fails(self) -> None:
+        snow = FakeSnow().on("/monitoring/", {"success": False, "message": "denied"})
+        with self.assertRaisesRegex(RuntimeError, "Unexpected response"):
+            workload.resolve(config.parse(base(workload={"query_ids": [QID1]})), snow)
+
+    def test_lookup_warehouse_searches_account_usage_for_older_ids(self) -> None:
         snow = FakeSnow().on(r"ACCOUNT_USAGE", [history_row(QID1)])
         cfg = config.parse(base(workload={"query_ids": [QID1]}, lookup_warehouse="LOOKUP_WH"))
         workload.resolve(cfg, snow)
-        self.assertEqual("USE WAREHOUSE LOOKUP_WH", snow.statements[0][0])
+        self.assertEqual(["USE WAREHOUSE LOOKUP_WH"], snow.ran("^USE WAREHOUSE"))
 
-    def test_query_ids_without_any_warehouse_ask_for_one(self) -> None:
-        snow = FakeSnow().on(r"ACCOUNT_USAGE", ProgrammingError(msg="No active warehouse", errno=606))
-        cfg = config.parse(base(workload={"query_ids": [QID1]}))
-        with self.assertRaisesRegex(ConfigError, "set lookup_warehouse .* or a DEFAULT_WAREHOUSE"):
-            workload.resolve(cfg, snow)
+        denied = FakeSnow().on(r"ACCOUNT_USAGE", ProgrammingError(msg="not authorized", errno=2003))
+        with self.assertRaisesRegex(ConfigError, "ACCOUNT_USAGE cannot be read"):
+            workload.resolve(cfg, denied)
 
     def test_lookup_warehouse_requires_query_ids(self) -> None:
         with self.assertRaisesRegex(ConfigError, "only used with workload.query_ids"):
             config.parse(base(lookup_warehouse="LOOKUP_WH"))
-
-    def test_query_id_errors(self) -> None:
-        cases = {
-            "not found": [history_row(QID1)],
-            "not a SELECT": [history_row(QID1, qtype="INSERT"), history_row(QID2)],
-            "did not succeed": [history_row(QID1, status="FAILED_WITH_ERROR"), history_row(QID2)],
-        }
-        for message, rows in cases.items():
-            snow = FakeSnow().on(r"ACCOUNT_USAGE", rows)
-            cfg = config.parse(base(workload={"query_ids": [QID1, QID2]}))
-            with self.subTest(message), self.assertRaisesRegex(ConfigError, message):
-                workload.resolve(cfg, snow)
 
     def test_discover_tables_from_plan_and_access_errors(self) -> None:
         plan = {"Operations": [[{"operation": "TableScan", "objects": ["DB.S.T1"]},

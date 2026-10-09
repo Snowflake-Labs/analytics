@@ -16,6 +16,8 @@ class Snow(Protocol):
 
     def execute(self, sql: str, params: tuple | None = None) -> str: ...
 
+    def monitoring(self, path: str) -> dict[str, Any]: ...
+
     def close(self) -> None: ...
 
 
@@ -33,6 +35,10 @@ class ConnectorSnow:
             cur.execute(sql, params)
             cur.fetchall()
             return cur.sfqid
+
+    def monitoring(self, path: str) -> dict[str, Any]:
+        """GET a GS monitoring endpoint (as get_query_status() does); needs no warehouse."""
+        return self._conn.rest.request(path, method="get", client="rest")
 
     def close(self) -> None:
         self._conn.close()

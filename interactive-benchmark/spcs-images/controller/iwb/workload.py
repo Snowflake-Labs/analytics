@@ -14,11 +14,6 @@ from iwb.snow import Snow
 PLAIN_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 HISTORY_COLUMNS = "QUERY_ID, QUERY_TEXT, DATABASE_NAME, SCHEMA_NAME, QUERY_TYPE, EXECUTION_STATUS"
 NOT_FOUND_OR_UNAUTHORIZED = 2003
-NO_ACTIVE_WAREHOUSE = 606
-NEEDS_WAREHOUSE = (
-    "workload.query_ids needs a warehouse to read query history: set lookup_warehouse in the config "
-    "(a standard warehouse this role can use), or a DEFAULT_WAREHOUSE on your user"
-)
 
 
 def ident(name: str) -> str:
@@ -41,65 +36,70 @@ class Query:
     source: str
 
 
-def _history(snow: Snow, query_ids: list[str], context: Context, lookup_warehouse: str | None) -> dict[str, dict]:
-    """Look up query IDs in ACCOUNT_USAGE (365 days), then INFORMATION_SCHEMA (7 days, fresh).
+def _monitored(snow: Snow, path: str) -> list[dict]:
+    response = snow.monitoring(path)
+    data = response.get("data")
+    if not response.get("success") or not isinstance(data, dict) or not isinstance(data.get("queries"), list):
+        raise RuntimeError(f"Unexpected response from {path}: {str(response)[:300]}")
+    return data["queries"]
 
-    Both need a running warehouse, and an interactive one would hit its 5 s timeout on these scans.
+
+def _from_monitoring(snow: Snow, query_id: str) -> dict | None:
+    """The query as a history row, or None if this user cannot see it (job retention, 14 days by default).
+
+    The monitoring API has no statement type, but filters on it: ask for the SELECT first.
     """
-    if lookup_warehouse:
-        try:
-            snow.execute(f"USE WAREHOUSE {ident(lookup_warehouse)}")
-        except ProgrammingError as exc:
-            raise ConfigError(f"lookup_warehouse {lookup_warehouse} cannot be used: {exc.msg}") from exc
-    try:
-        return _lookup(snow, query_ids, context)
-    except ProgrammingError as exc:
-        if exc.errno == NO_ACTIVE_WAREHOUSE:
-            raise ConfigError(NEEDS_WAREHOUSE) from exc
-        raise
+    found = _monitored(snow, f"/monitoring/queries?uuid={query_id}&stmt_type=SELECT&max=1")
+    query_type = "SELECT"
+    if not found:
+        found = _monitored(snow, f"/monitoring/queries/{query_id}")
+        query_type = None
+    if not found:
+        return None
+    q = found[0]
+    return {"QUERY_ID": query_id, "QUERY_TEXT": q.get("sqlText"), "DATABASE_NAME": q.get("databaseName"),
+            "SCHEMA_NAME": q.get("schemaName"), "QUERY_TYPE": query_type, "EXECUTION_STATUS": q.get("status")}
 
 
-def _lookup(snow: Snow, query_ids: list[str], context: Context) -> dict[str, dict]:
-    found: dict[str, dict] = {}
-    placeholders = ", ".join(["%s"] * len(query_ids))
+def _from_account_usage(snow: Snow, query_ids: list[str], lookup_warehouse: str) -> list[dict]:
     try:
-        for row in snow.rows(
+        snow.execute(f"USE WAREHOUSE {ident(lookup_warehouse)}")
+        return snow.rows(
             f"SELECT {HISTORY_COLUMNS} FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY "
-            f"WHERE QUERY_ID IN ({placeholders})",
+            f"WHERE QUERY_ID IN ({', '.join(['%s'] * len(query_ids))})",
             tuple(query_ids),
-        ):
-            found[row["QUERY_ID"]] = row
+        )
     except ProgrammingError as exc:
-        if exc.errno != NOT_FOUND_OR_UNAUTHORIZED:
-            raise
-        # No SNOWFLAKE database access; INFORMATION_SCHEMA still covers recent queries.
-    missing = [q for q in query_ids if q not in found]
-    if missing:
-        placeholders = ", ".join(["%s"] * len(missing))
-        for row in snow.rows(
-            f"SELECT {HISTORY_COLUMNS} FROM TABLE({ident(context.database)}.INFORMATION_SCHEMA"
-            f".QUERY_HISTORY_BY_USER(RESULT_LIMIT => 10000)) WHERE QUERY_ID IN ({placeholders})",
-            tuple(missing),
-        ):
-            found[row["QUERY_ID"]] = row
+        raise ConfigError(f"lookup_warehouse is set, but ACCOUNT_USAGE cannot be read with it: {exc.msg}") from exc
+
+
+def _history(snow: Snow, query_ids: list[str], lookup_warehouse: str | None) -> dict[str, dict]:
+    """Look up query IDs through the GS monitoring API (no warehouse needed), then, for IDs past
+    job retention, in ACCOUNT_USAGE (365 days) if a lookup warehouse is configured."""
+    found = {qid: row for qid in query_ids if (row := _from_monitoring(snow, qid))}
+    missing = [qid for qid in query_ids if qid not in found]
+    if missing and lookup_warehouse:
+        found.update({row["QUERY_ID"]: row for row in _from_account_usage(snow, missing, lookup_warehouse)})
     return found
 
 
 def _from_query_ids(cfg: Config, snow: Snow) -> list[Query]:
     ids = [e.query_id for e in cfg.query_id_entries]
-    history = _history(snow, sorted(set(ids)), cfg.context, cfg.lookup_warehouse)
+    history = _history(snow, sorted(set(ids)), cfg.lookup_warehouse)
     missing = sorted(set(ids) - history.keys())
     if missing:
         raise ConfigError(
-            "Query IDs not found in query history visible to this role "
-            f"(ACCOUNT_USAGE: 365 days, INFORMATION_SCHEMA: last 7 days, own queries): {missing}"
+            "Query IDs not found in query history visible to this user (own queries, or MONITOR on the "
+            "user or warehouse; last 14 days by default; set lookup_warehouse to also search "
+            f"ACCOUNT_USAGE, 365 days): {missing}"
         )
     equal = 100 / len(cfg.query_id_entries)
     queries = []
     for i, entry in enumerate(cfg.query_id_entries, 1):
         row = history[entry.query_id]
         if row["QUERY_TYPE"] != "SELECT":
-            raise ConfigError(f"Query {entry.query_id} is a {row['QUERY_TYPE']}, not a SELECT")
+            kind = f" ({row['QUERY_TYPE']})" if row["QUERY_TYPE"] else ""
+            raise ConfigError(f"Query {entry.query_id} is not a SELECT{kind}")
         if row["EXECUTION_STATUS"] != "SUCCESS":
             raise ConfigError(f"Query {entry.query_id} did not succeed ({row['EXECUTION_STATUS']})")
         if not row["QUERY_TEXT"]:

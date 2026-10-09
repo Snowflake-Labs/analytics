@@ -169,7 +169,7 @@
     "lookup_warehouse": {
       "type": "string",
       "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$",
-      "description": "Standard warehouse used only to look up workload.query_ids in query history. Needed when the user has no DEFAULT_WAREHOUSE; not allowed with workload.queries."
+      "description": "Standard warehouse used only to search SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY (365 days) for workload.query_ids older than job retention (14 days by default). Not needed otherwise; not allowed with workload.queries."
     },
     "concurrent_users": {
       "type": "integer",
