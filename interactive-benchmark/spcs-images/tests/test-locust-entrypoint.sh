@@ -54,6 +54,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/ready":
             self.reply(200, {"status": "ready"})
+        elif self.path == "/api/workload" and MODE == "legacy":
+            self.reply(404, {"detail": "Not Found"})
+        elif self.path == "/api/queries" and MODE == "legacy":
+            self.reply(200, ["heavy", "light"])
         elif self.path == "/api/workload":
             self.reply(200, [] if MODE == "no_queries" else [
                 {"id": "heavy", "weight": 90},
@@ -133,6 +137,12 @@ total=$((heavy + light))
 (( total >= 25 )) || fail "too few interactive requests to check weights: $total"
 (( heavy * 100 >= total * 75 )) || fail "weights not applied: heavy=$heavy light=$light"
 (( light > 0 )) || fail "light query never chosen"
+
+# 1c. An API older than /api/workload (a rolling update): equal weights from /api/queries.
+run_entrypoint legacy LOCUST_USERS=4 LOCUST_SPAWN=4
+expect_finished legacy
+grep -q "\[benchmark\] VERDICT: PASS" "$TMP_DIR/out" || fail "legacy API did not pass"
+grep -q '^heavy$' "$TMP_DIR/hits" && grep -q '^light$' "$TMP_DIR/hits" || fail "legacy API queries not all run"
 
 # 2. Every interactive request fails: verdict FAIL, results still printed.
 run_entrypoint fail_interactive

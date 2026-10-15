@@ -72,7 +72,7 @@ class Query:
     context: Context
 
 
-def connection_kwargs(context: Context = DEFAULT_CONTEXT) -> dict[str, Any]:
+def connection_kwargs(context: Context) -> dict[str, Any]:
     database, schema = context
     return {
         **base_connection_kwargs(),
@@ -103,12 +103,13 @@ class ConnectionPool:
         self._sem = Semaphore(size)
 
     def _queue(self, context: Context) -> Queue[snowflake.connector.SnowflakeConnection]:
-        return self._idle.setdefault(context, Queue())
+        queue = self._idle.get(context)
+        return queue if queue is not None else self._idle.setdefault(context, Queue())
 
     def _new_connection(self, context: Context) -> snowflake.connector.SnowflakeConnection:
         return snowflake.connector.connect(**connection_kwargs(context))
 
-    def acquire(self, context: Context = DEFAULT_CONTEXT) -> snowflake.connector.SnowflakeConnection:
+    def acquire(self, context: Context) -> snowflake.connector.SnowflakeConnection:
         if not self._sem.acquire(timeout=POOL_ACQUIRE_TIMEOUT):
             raise HTTPException(
                 status_code=503,
@@ -130,9 +131,7 @@ class ConnectionPool:
             self._sem.release()
             raise
 
-    def release(
-        self, conn: snowflake.connector.SnowflakeConnection, context: Context = DEFAULT_CONTEXT
-    ) -> None:
+    def release(self, conn: snowflake.connector.SnowflakeConnection, context: Context) -> None:
         try:
             if not conn.is_closed():
                 self._queue(context).put_nowait(conn)
