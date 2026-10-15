@@ -86,6 +86,17 @@ def connection_kwargs(context: Context) -> dict[str, Any]:
     }
 
 
+def split_by_weight(count: int, weights: dict[Context, float]) -> list[Context]:
+    """`count` contexts in proportion to `weights`, by largest remainder."""
+    total = sum(weights.values())
+    shares = {context: count * weight / total for context, weight in weights.items()}
+    counts = {context: int(share) for context, share in shares.items()}
+    by_remainder = sorted(shares, key=lambda context: shares[context] - counts[context], reverse=True)
+    for context in by_remainder[:count - sum(counts.values())]:
+        counts[context] += 1
+    return [context for context, n in counts.items() for _ in range(n)]
+
+
 class ConnectionPool:
     """Bounded, blocking pool: at most POOL_SIZE connections in use at once.
 
@@ -138,27 +149,23 @@ class ConnectionPool:
         finally:
             self._sem.release()
 
-    def warmup(self, count: int | None = None, contexts: list[Context] | None = None) -> int:
-        """Pre-open up to `count` (default: POOL_SIZE) idle connections.
+    def warmup(self, count: int | None = None, weights: dict[Context, float] | None = None) -> None:
+        """Pre-open `count` (default: POOL_SIZE) idle connections, or raise.
 
-        Connections are spread round-robin over `contexts` (default: the default
-        context). Idle connections do not hold a semaphore slot; acquire() takes
-        one when it borrows them.
+        Connections are split over contexts by `weights` (default: all in the
+        default context), so a busy context does not log in during the run.
+        Idle connections do not hold a semaphore slot; acquire() takes one
+        when it borrows them.
         """
         want = self._size if count is None else min(count, self._size)
-        contexts = contexts or [DEFAULT_CONTEXT]
-        opened = 0
-        for i in range(want):
-            context = contexts[i % len(contexts)]
+        for i, context in enumerate(split_by_weight(want, weights or {DEFAULT_CONTEXT: 1})):
             try:
                 conn = self._new_connection(context)
             except Exception as exc:
                 raise RuntimeError(
-                    f"Pool warmup failed after {opened}/{want}: {exc}"
+                    f"Pool warmup failed after {i}/{want}: {exc}"
                 ) from exc
             self._queue(context).put_nowait(conn)
-            opened += 1
-        return opened
 
     def close_all(self) -> None:
         """Close all idle connections in the pool."""
@@ -223,8 +230,11 @@ query_registry: dict[str, Query] = (
 )
 
 
-def workload_contexts() -> list[Context]:
-    return sorted({query.context for query in query_registry.values()})
+def workload_weights() -> dict[Context, float]:
+    weights: dict[Context, float] = {}
+    for query in query_registry.values():
+        weights[query.context] = weights.get(query.context, 0) + query.weight
+    return weights
 
 
 def execute_query(query: Query) -> dict[str, Any]:
@@ -264,21 +274,13 @@ async def lifespan(_app: FastAPI):
         async def _warmup() -> None:
             global pool_warmup_error
             try:
-                opened = await asyncio.to_thread(pool.warmup, POOL_WARMUP, workload_contexts())
+                await asyncio.to_thread(pool.warmup, POOL_WARMUP, workload_weights())
             except Exception as exc:  # noqa: BLE001
                 pool_warmup_error = str(exc)
                 log.exception("Connection pool warmup failed: %s", exc)
                 return
 
-            expected = min(POOL_WARMUP, POOL_SIZE)
-            if opened != expected:
-                pool_warmup_error = (
-                    f"Connection pool warmup opened {opened}/{expected} connections"
-                )
-                log.error(pool_warmup_error)
-                return
-
-            log.info("Prewarmed %d/%d connections", opened, expected)
+            log.info("Prewarmed %d connections", min(POOL_WARMUP, POOL_SIZE))
             pool_ready.set()
 
         warmup_task = asyncio.create_task(_warmup())

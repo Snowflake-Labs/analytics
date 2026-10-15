@@ -65,23 +65,29 @@ class ContextPoolTest(unittest.TestCase):
         self.assertIs(a, pool.acquire(("DB", "A")))
         self.assertEqual([("DB", "A"), ("DB", "B")], created)
 
-    def test_warmup_spreads_connections_over_contexts(self) -> None:
-        pool = server.ConnectionPool(size=4)
+    def test_warmup_splits_connections_by_context_weight(self) -> None:
+        pool = server.ConnectionPool(size=10)
         pool._new_connection = Mock(side_effect=lambda context: Mock(context=context))
 
-        self.assertEqual(4, pool.warmup(4, [("DB", "A"), ("DB", "B")]))
-        self.assertEqual(2, pool._idle[("DB", "A")].qsize())
-        self.assertEqual(2, pool._idle[("DB", "B")].qsize())
+        pool.warmup(8, {("DB", "A"): 70, ("DB", "B"): 25, ("DB", "C"): 5})
+        self.assertEqual([6, 2, 0], [pool._idle[c].qsize() if c in pool._idle else 0
+                                     for c in (("DB", "A"), ("DB", "B"), ("DB", "C"))])
+
+    def test_split_by_weight_keeps_the_count(self) -> None:
+        for count, weights in ((10, {"a": 95, "b": 5}), (7, {"a": 1, "b": 1, "c": 1}), (1, {"a": 1, "b": 99})):
+            with self.subTest(count=count, weights=weights):
+                self.assertEqual(count, len(server.split_by_weight(count, weights)))
+        self.assertEqual(["b"], server.split_by_weight(1, {"a": 1, "b": 99}))
 
 
 class WarmupCapacityTest(unittest.TestCase):
     def test_warmed_connections_do_not_consume_capacity(self) -> None:
         pool = server.ConnectionPool(size=2)
         pool._new_connection = Mock(side_effect=lambda context: Mock(**{"is_closed.return_value": False}))
-        self.assertEqual(2, pool.warmup(2))
+        pool.warmup(2)
         with patch.object(server, "POOL_ACQUIRE_TIMEOUT", 0.1):
-            first = pool.acquire()
-            second = pool.acquire()
+            first = pool.acquire(server.DEFAULT_CONTEXT)
+            second = pool.acquire(server.DEFAULT_CONTEXT)
         self.assertIsNot(first, second)
         self.assertEqual(2, pool._new_connection.call_count)
 
