@@ -30,6 +30,7 @@ API_POLL_SECONDS = 2
 # Settings the controller owns; a stray value in the host environment must not change the gates.
 CONTROLLED_ENV_PREFIXES = ("BASELINE_", "BENCHMARK_MAX_", "POOL_", "LOCUST_", "API_READY_")
 LOCUST_EXIT = {0: "PASS", 1: "API_NOT_READY", 2: "BASELINE_FAIL", 3: "BENCHMARK_FAIL"}
+API_EXITED = "API_EXITED"
 # Locust log lines start with a local-time "[YYYY-mm-dd HH:MM:SS,mmm]".
 LOCUST_LOG_TS = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(\d{3})\]")
 
@@ -196,8 +197,8 @@ def run_load(
             )
             deadline = time.monotonic() + locust_timeout
             while (rc := locust.poll()) is None:
-                if api.poll() is not None:
-                    raise RuntimeError(f"The API server exited ({api.returncode}) during the load test; see api.log")
+                if api.poll() is not None:  # see api.log
+                    break
                 if time.monotonic() > deadline:
                     raise RuntimeError(f"Locust did not finish within {locust_timeout}s")
                 time.sleep(API_POLL_SECONDS)
@@ -206,7 +207,7 @@ def run_load(
                 _stop(locust)
             _stop(api)
 
-    outcome = LOCUST_EXIT.get(rc, f"LOCUST_EXIT_{rc}")
+    outcome = API_EXITED if rc is None else LOCUST_EXIT.get(rc, f"LOCUST_EXIT_{rc}")
     result = LoadResult(
         outcome=outcome,
         baseline=parse_stats_row(results_dir / "baseline_stats_stats.csv", "/api/run/baseline"),

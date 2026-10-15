@@ -96,12 +96,17 @@ def prepare(cfg: Config, snow: Snow, tables: set[str], wh: Warehouse, run_id: st
     # Later runs drop it as stale only after this run's worst case, plus an hour.
     expires = int(time.time()) + budget.worst_case_seconds(cfg.run_seconds, cfg.concurrent_users) + 3600
     tables_clause = f"TABLES ({', '.join(sorted(tables))}) " if tables else ""
-    snow.execute(
-        f"CREATE INTERACTIVE WAREHOUSE {ident(wh.name)} {tables_clause}"
-        f"WAREHOUSE_SIZE = '{new.size}' MIN_CLUSTER_COUNT = {new.min_cluster_count} "
-        f"MAX_CLUSTER_COUNT = {new.max_cluster_count} AUTO_SUSPEND = 86400 AUTO_RESUME = TRUE "
-        f"COMMENT = '{COMMENT_PREFIX}{run_id}:expires={expires}'"
-    )
+    try:
+        snow.execute(
+            f"CREATE INTERACTIVE WAREHOUSE {ident(wh.name)} {tables_clause}"
+            f"WAREHOUSE_SIZE = '{new.size}' MIN_CLUSTER_COUNT = {new.min_cluster_count} "
+            f"MAX_CLUSTER_COUNT = {new.max_cluster_count} AUTO_SUSPEND = 86400 AUTO_RESUME = TRUE "
+            f"COMMENT = '{COMMENT_PREFIX}{run_id}:expires={expires}'"
+        )
+    except ProgrammingError:
+        # Not created by this run (no privilege, or the name is taken), so teardown must not drop it.
+        wh.created = False
+        raise
     wh.tables = {t.upper() for t in tables}
     events.emit("SETUP_WAREHOUSE", "created", warehouse=wh.name, tables=sorted(tables))
 
@@ -111,11 +116,13 @@ def activate(cfg: Config, snow: Snow, wh: Warehouse) -> None:
         snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} RESUME IF SUSPENDED")
     elif (row := _show(snow, wh.name)) and row.get("STATE") == "SUSPENDED":
         # Resuming needs OPERATE; a started warehouse needs only USAGE, so only resume a suspended one.
+        # Set first, so a stop during the RESUME still suspends it again.
+        wh.resumed = True
         try:
             snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} RESUME IF SUSPENDED")
         except ProgrammingError as exc:
+            wh.resumed = False
             raise ConfigError(f"Warehouse {wh.name} is suspended and this role cannot resume it: {exc.msg}") from exc
-        wh.resumed = True
     if cfg.fallback_warehouse and wh.created:
         snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} SET FALLBACK_WAREHOUSE = {ident(cfg.fallback_warehouse)}")
     wait_started(snow, wh.name)

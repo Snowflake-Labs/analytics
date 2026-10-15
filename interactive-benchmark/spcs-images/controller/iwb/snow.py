@@ -58,7 +58,7 @@ def session_token_connection(connection_name: str) -> Path | None:
     token_file = os.environ.get("SNOWFLAKE_TOKEN_FILE_PATH", SESSION_TOKEN_FILE)
     account = os.environ.get("SNOWFLAKE_ACCOUNT")
     host = os.environ.get("SNOWFLAKE_HOST") or os.environ.get("SNOWFLAKE_ACCOUNT_URL", "")
-    host = host.split("://", 1)[-1].split("/", 1)[0]
+    host = host.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
     if not (account and host and os.access(token_file, os.R_OK)):
         return None
     home = Path(tempfile.mkdtemp(prefix="iwb-snowflake-"))
