@@ -27,11 +27,17 @@ class Warehouse:
     created: bool
     tables: set[str] = field(default_factory=set)
     resumed: bool = False
+    fallback: str | None = None
 
 
 def _show(snow: Snow, name: str) -> dict | None:
     rows = [r for r in snow.rows("SHOW WAREHOUSES LIKE %s", (name,)) if r["NAME"].upper() == name.upper()]
     return rows[0] if rows else None
+
+
+def _configured_fallback(snow: Snow, name: str) -> str | None:
+    rows = snow.rows(f"SHOW PARAMETERS LIKE 'FALLBACK_WAREHOUSE' IN WAREHOUSE {ident(name)}")
+    return (rows[0].get("VALUE") or None) if rows else None
 
 
 def _attached(row: dict) -> set[str]:
@@ -65,11 +71,17 @@ def prepare(cfg: Config, snow: Snow, tables: set[str], run_id: str, events: Even
             raise ConfigError(f"Warehouse {cfg.existing_warehouse} does not exist or is not visible to this role")
         if row.get("TYPE") != "INTERACTIVE":
             raise ConfigError(f"Warehouse {cfg.existing_warehouse} is {row.get('TYPE')}, not INTERACTIVE")
+        fallback = _configured_fallback(snow, row["NAME"])
+        if cfg.fallback_warehouse and cfg.fallback_warehouse.upper() != (fallback or "").upper():
+            raise ConfigError(
+                f"fallback_warehouse is only set on created warehouses; {row['NAME']} falls back to "
+                f"{fallback or 'no warehouse'}. Remove fallback_warehouse or set it on the warehouse"
+            )
         not_attached = sorted(t for t in tables if t.upper() not in _attached(row))
         if not_attached:
             events.emit("SETUP_WAREHOUSE", "warning", reason="tables not attached; reads are not cached",
                         tables=not_attached)
-        return Warehouse(row["NAME"], created=False, tables=_attached(row))
+        return Warehouse(row["NAME"], created=False, tables=_attached(row), fallback=fallback)
     new = cfg.new_warehouse
     assert new is not None
     cleanup_stale(snow, events)
@@ -83,7 +95,7 @@ def prepare(cfg: Config, snow: Snow, tables: set[str], run_id: str, events: Even
         f"COMMENT = '{COMMENT_PREFIX}{run_id}:expires={expires}'"
     )
     events.emit("SETUP_WAREHOUSE", "created", warehouse=name, tables=sorted(tables))
-    return Warehouse(name, created=True, tables={t.upper() for t in tables})
+    return Warehouse(name, created=True, tables={t.upper() for t in tables}, fallback=cfg.fallback_warehouse)
 
 
 def activate(cfg: Config, snow: Snow, wh: Warehouse) -> None:

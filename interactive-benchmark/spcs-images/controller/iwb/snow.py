@@ -53,6 +53,8 @@ def connect(connection_name: str) -> ConnectorSnow:
     conn = snowflake.connector.connect(
         connection_name=connection_name,
         **({"role": role} if role else {}),
+        # The session idles from warm-up to measurement; a long run must not lose it before teardown.
+        client_session_keep_alive=True,
         session_parameters={"USE_CACHED_RESULT": False},
     )
     return ConnectorSnow(conn)
