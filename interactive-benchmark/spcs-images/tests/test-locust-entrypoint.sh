@@ -127,14 +127,15 @@ grep -q "\[benchmark\] VERDICT: PASS" "$TMP_DIR/out" || fail "benchmark did not 
 grep -q "benchmark=COMPLETED" "$TMP_DIR/out" || fail "heartbeat status wrong"
 [[ -f "$TMP_DIR/results/locust_stats_stats.csv" ]] || fail "results not written to BENCHMARK_RESULTS_DIR"
 
-# 1b. Queries are chosen by weight (90/10). 10 users give ~40 requests, so a
-#     heavy share under 75% is a >3 sigma event if weights are applied.
-run_entrypoint ok LOCUST_USERS=10 LOCUST_SPAWN=10
+# 1b. Queries are chosen by weight (90/10). 20 users give ~80 requests, so a
+#     heavy share under 75% is a >3 sigma event if weights are applied, and
+#     light is missing with probability 0.9^80 < 0.03%.
+run_entrypoint ok LOCUST_USERS=20 LOCUST_SPAWN=20
 expect_finished weights
 heavy="$(grep -c '^heavy$' "$TMP_DIR/hits" || true)"
 light="$(grep -c '^light$' "$TMP_DIR/hits" || true)"
 total=$((heavy + light))
-(( total >= 25 )) || fail "too few interactive requests to check weights: $total"
+(( total >= 50 )) || fail "too few interactive requests to check weights: $total"
 (( heavy * 100 >= total * 75 )) || fail "weights not applied: heavy=$heavy light=$light"
 (( light > 0 )) || fail "light query never chosen"
 
