@@ -59,11 +59,13 @@ RUN cd /app/controller \
 COPY api/server.py api/entrypoint.sh /app/api/
 COPY locust/locustfile.py locust/entrypoint.sh /app/locust/
 COPY controller/iwb /app/controller/iwb
+COPY controller/run.sh /app/controller/
 COPY role-entrypoint.sh /usr/local/bin/benchmark-entrypoint
 
 RUN chmod +x \
       /app/api/entrypoint.sh \
       /app/locust/entrypoint.sh \
+      /app/controller/run.sh \
       /usr/local/bin/benchmark-entrypoint
 
 # UID 65532 has no passwd entry in some bases, which leaves HOME=/ (read-only).

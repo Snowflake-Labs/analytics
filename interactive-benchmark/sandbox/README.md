@@ -1,9 +1,11 @@
 # Running the benchmark in a Cortex Sandbox
 
 `launch.py` runs one benchmark in a [Cortex Sandbox](https://docs.snowflake.com/en/LIMITEDACCESS/developer-guide/cortex-sandboxes/overview)
-(private preview, enabled per account) with a single command. It needs no compute pool, no
-service and no image release: the sandbox runs the API, Locust and controller sources from
-this checkout.
+(private preview, enabled per account) with a single command. It needs no compute pool and no
+service. With `--image` the sandbox runs the released benchmark image, which is how Snowsight
+runs it (see [Running the benchmark image](#running-the-benchmark-image)); without it, the
+sandbox runs the API, Locust and controller sources from this checkout, so it also works
+before an image release.
 
 The sandbox runs as **your** Snowflake identity, with the role you pass. The benchmark can
 only read what that role can read.
@@ -19,8 +21,11 @@ cd interactive-benchmark/sandbox
 python3 -m venv .venv
 .venv/bin/pip install "snowflake-sandbox-python==0.2.2a4"
 .venv/bin/python launch.py --config run.json --connection my-conn \
-  [--role MY_ROLE] [--results-stage MY_DB.MY_SCHEMA.IWB_RESULTS]
+  [--role MY_ROLE] [--results-stage MY_DB.MY_SCHEMA.IWB_RESULTS] \
+  [--image /snowflake/images/snowflake_images/interactive-analytics/interactive-benchmark:<tag>]
 ```
+
+`--image` needs an image with the controller role (0.3.0 or later).
 
 Pin the SDK: it is published only as pre-releases, and the launcher works around 0.2.2a4
 behaviour (see [How it works](#how-it-works)).
@@ -74,6 +79,7 @@ the run progresses, then `result.json`:
 | `client` | Locust's view of the benchmark: requests, failures, req/s, latency percentiles. Includes the API and network overhead |
 | `server` | The same window from `INFORMATION_SCHEMA.QUERY_HISTORY_BY_WAREHOUSE`, filtered to the run's query tag: `n`, `n_failed`, `n_fallback`, percentiles of total elapsed time, `p95_interactive_only_ms`, average compile/exec/queue time and `clusters_used`. **Use these for warehouse latency** |
 | `window` | Epoch seconds of the measured window (full load only, ramp-up excluded) |
+| `error`, `teardown_error` | Why the run failed, and why a created warehouse could not be dropped (only when that happened) |
 | `workload`, `warehouse` | The resolved queries (ids `q01`…, weights, context) and the warehouse used |
 
 `server` counts only statements that ended inside `window`. `client` comes from Locust's
@@ -105,17 +111,18 @@ which `GET` downloads as a `.part#...` file; ignore it.
 | 30 | Invalid config, or missing access (the event says what) |
 | 40 | Infrastructure (API not ready, baseline gate failed) |
 | 1 | Unexpected error (see the `RUN failed` event), a failed results copy (`results_copy_failed`), or a launcher error |
-| 64, 65 | `bootstrap.sh` usage error or incomplete bundle |
+| 64, 65 | `bootstrap.sh` or `run.sh` usage error, or an incomplete bundle |
 | 143, 130 | Launcher stopped by SIGTERM or SIGINT; the controller tore down first (a deadline exits 1 after the same teardown) |
 
-When bootstrap exits without the controller's final event, or with a different code, the launcher also prints the tail of the run log.
+When the run exits without the controller's final event, or with a different code, the launcher also prints the tail of the run log.
 
 ## Privileges for the sandbox role
 
 - Creating a sandbox: the required privilege is not documented yet; `SYSADMIN` works.
 - SELECT on every table the queries read, plus USAGE on their database/schema. Grant
   interactive tables explicitly: `GRANT SELECT ON ALL TABLES` does not cover them.
-- `warehouse.existing`: USAGE on that interactive warehouse.
+- `warehouse.existing`: USAGE on that interactive warehouse, and OPERATE if it may be suspended
+  (it is then resumed for the run).
 - `warehouse.create`: `CREATE WAREHOUSE` on the account.
 - `fallback_warehouse`, `lookup_warehouse`: USAGE on them.
 - `workload.query_ids`: your own queries (any role), or MONITOR on the user or the query's
@@ -127,13 +134,13 @@ When bootstrap exits without the controller's final event, or with a different c
 | Symptom | Likely cause |
 |---|---|
 | Exception from `Sandbox.create` (auth error or 403) | Cortex Sandboxes are not enabled for the account, or the role cannot create sandboxes |
-| `bootstrap exited` after a uv or pip 403 or download error | The sandbox cannot reach pypi.org |
+| `run exited` after a uv or pip 403 or download error | The sandbox cannot reach pypi.org (without `--image` only) |
 | Exit 30, `does not compile for this role` | Missing USAGE or SELECT on an object the query reads |
 | Exit 30, `Query IDs not found` | Not visible to you (not your own, no MONITOR), or older than job retention (14 days by default): set `lookup_warehouse` to search ACCOUNT_USAGE |
 | Exit 30, interactive table not attached | `warehouse.existing` does not have that table attached |
 | Exit 40 | The baseline failed (the sandbox cannot drive that many users), or the API never became ready |
 | Exit 20 | More than 1% of queries failed, for example on the 5 s interactive timeout with no `fallback_warehouse` |
-| An `IWB_*_IW` warehouse is left behind | Teardown failed; the event names it. Later runs that create a warehouse drop it once its expiry (run length + 3 h) has passed |
+| An `IWB_*_IW` warehouse is left behind | Teardown failed: the `TEARDOWN failed` event and `teardown_error` in `result.json` name it. Later runs that create a warehouse drop it once its expiry (the run's worst-case duration plus an hour) has passed |
 | `RuntimeError: greenlet is being finalized` in `locust.log` | Harmless gevent noise at Locust shutdown |
 
 ## Timing and sizing
@@ -146,17 +153,53 @@ When bootstrap exits without the controller's final event, or with a different c
   (exit 40) if the sandbox cannot keep up.
 - The launcher's deadline is the controller's worst case (`spcs-images/controller/iwb/budget.py`:
   two 15-minute warehouse waits, the Locust timeout, setup and teardown) plus 10 minutes for the
-  install, so the controller always times out and cleans up first. `idle_suspend` is that plus 5
+  install, so the controller normally times out and cleans up first. `idle_suspend` is that plus 5
   minutes.
 - If the launcher is stopped or hits its deadline, it sends SIGTERM to the controller and waits
   up to 5 minutes for teardown (which drops a created warehouse) before terminating the sandbox.
 
+## Running the benchmark image
+
+The image's controller role runs one benchmark from a config file. This is the contract for a
+host such as Snowsight. Use image `/snowflake/images/snowflake_images/interactive-analytics/interactive-benchmark:<tag>`
+(0.3.0 or later), with the leading `/`: `SHOW IMAGES` prints the path without it.
+
+- **Start**: write the config to a file such as `/var/tmp/iwb/config.json`, then run
+  `benchmark-entrypoint run --config /var/tmp/iwb/config.json` with `BENCHMARK_ROLE=controller`,
+  as the user's role. Give it the memory tier and `idle_suspend` from [Timing and sizing](#timing-and-sizing).
+- **Connection**: the controller connects with the session token at `/snowflake/session/token`
+  (or `SNOWFLAKE_TOKEN_FILE_PATH`), using `SNOWFLAKE_ACCOUNT` and the host from `SNOWFLAKE_HOST`
+  or `SNOWFLAKE_ACCOUNT_URL`. It uses the account host as given; the hyphenated form is rejected
+  by the egress proxy for account names with underscores. If neither host variable is set, it
+  uses the `default` entry in `$SNOWFLAKE_HOME/connections.toml` instead. `SNOWFLAKE_ROLE`, if
+  set, is the role.
+- **Progress**: stdout has one JSON event per line, `{"iwb": "event", "seq": n, "step": ..., "status": ..., "detail": {...}}`,
+  with `seq` counting from 1. Skip other lines. The last event is `RUN` with `detail.exit_code`
+  and `detail.result`, the path of `result.json`.
+- **Result**: `$IWB_RESULTS_DIR/<run_id>/result.json` (default `/var/tmp/iwb/results`). The
+  process's exit code is in [Exit codes](#exit-codes).
+- **Cancel**: send SIGTERM to that process and give it up to 5 minutes to exit before removing
+  the sandbox. That lets it drop a warehouse it created. Further signals are ignored while it
+  tears down.
+
+`launch.py --image` instead drives the image through `exec` calls. It writes the config, starts
+`/app/controller/run.sh /var/tmp/iwb/config.json` detached with its output in
+`/var/tmp/iwb/run.log` and its exit code in `/var/tmp/iwb/run.rc`, and polls both. To cancel,
+it creates `/var/tmp/iwb/stop` and sends SIGTERM to the PID in `/var/tmp/iwb/controller.pid`.
+`run.sh` checks the stop file before and after starting the controller, so a cancel that
+arrives before the controller has started still takes effect. With `--results-stage`, `run.sh`
+copies the results to the stage mount (`IWB_RESULTS_COPY_DIR`) at the end.
+
 ## How it works
+
+Without `--image`:
 
 1. The launcher creates a sandbox, uploads a zipped bundle (`spcs-images/{api,locust,controller}` plus `bootstrap.sh` and your config) and unpacks it.
 2. It starts `bootstrap.sh` detached. The script installs the pinned dependencies from the `uv.lock` files (pypi.org only; the sandbox cannot reach internal mirrors).
-3. `bootstrap.sh` then runs `python -m iwb run --config config.json`, the same controller the image runs with `BENCHMARK_ROLE=controller`.
+3. `bootstrap.sh` then runs `controller/run.sh config.json`, as the image does with `BENCHMARK_ROLE=controller`.
 4. The launcher relays events from the run log until the controller exits, prints `result.json`, then terminates the sandbox.
+
+With `--image`, steps 1 to 3 are those of [Running the benchmark image](#running-the-benchmark-image).
 
 The SDK's `code=`/`command=` option is not used. In `snowflake-sandbox-python` 0.2.2a4 it drops `role` and `idle_suspend`, runs the command before the code is extracted, and keeps the sandbox running after the command exits, so `poll()` never returns.
 
@@ -164,7 +207,11 @@ The SDK's `code=`/`command=` option is not used. In `snowflake-sandbox-python` 0
 
 Verified on a preprod account (`sandbox-base:1.0.4`, Python 3.11, SDK 0.2.2a4) with 10- to 200-user runs that created and dropped their warehouse:
 
-- The platform-rendered `default` connection works with the Python connector, as the `--role` role.
+- The `default` connection the default image renders uses the hyphenated account host, which the
+  egress proxy rejects (HTTP 403) for account names with underscores, so the controller connects
+  with the session token instead (verified on preprod8, account `AL_BENCHMARK_PP8`).
+- On the benchmark image the sandbox runs as root and renders no `connections.toml`. `exec` needs
+  `python3` and `bash`, which the image has.
 - `exec()` raises on a non-zero exit, so the launcher detects completion from an exit-code file, not a PID.
-- Stage mounts do not support `truncate()`, which Locust's CSV writer needs. `bootstrap.sh` writes results to local disk and copies them to `IWB_RESULTS_DIR` at the end. The SDK's file API also cannot read mount paths.
+- Stage mounts do not support `truncate()`, which Locust's CSV writer needs. `run.sh` writes results to local disk and copies them to `IWB_RESULTS_COPY_DIR` at the end. The SDK's file API also cannot read mount paths.
 - Client-side latency includes the sandbox's network path. One run saw a 13 s stall across all users while no query took over 326 ms on the server. Prefer the `server` metrics, and repeat a run if client p99 is far above server p99.

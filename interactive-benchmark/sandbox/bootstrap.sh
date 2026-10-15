@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Inside a Cortex Sandbox (or any Linux host with Python 3.11+): install the pinned API,
-# Locust and controller environments from their uv.lock files, then run one benchmark.
+# Locust and controller environments from their uv.lock files, then run one benchmark with
+# controller/run.sh, as the image does.
 #
 # Usage: bootstrap.sh <config.json>
 # The bundle directory must contain api/, locust/ and controller/ from spcs-images/.
 #
-# Env: IWB_CONNECTION (default "default", the sandbox-rendered connection),
-#      IWB_RESULTS_DIR (optional; results are copied there when the run ends),
-#      IWB_WORK_DIR (default /var/tmp/iwb; results are written to $IWB_WORK_DIR/results).
+# Env: IWB_WORK_DIR (default /var/tmp/iwb); see controller/run.sh for the rest.
 
 set -euo pipefail
 
@@ -44,32 +43,13 @@ for project in api locust controller; do
 done
 echo '{"iwb":"bootstrap","status":"installed"}'
 
+export IWB_CONTROLLER_PYTHON="$WORK_DIR/venvs/controller/bin/python"
 export IWB_API_PYTHON="$WORK_DIR/venvs/api/bin/python"
 export IWB_API_SERVER="$CODE_DIR/api/server.py"
 export IWB_LOCUST_ENTRYPOINT="$CODE_DIR/locust/entrypoint.sh"
 export BENCHMARK_LOCUST_BIN="$WORK_DIR/venvs/locust/bin/locust"
 export BENCHMARK_LOCUST_FILE="$CODE_DIR/locust/locustfile.py"
 export BENCHMARK_HTTP_PYTHON="$WORK_DIR/venvs/locust/bin/python"
+export IWB_WORK_DIR="$WORK_DIR"
 
-cd "$CODE_DIR/controller"
-rc=0
-# Backgrounded so its PID can be recorded: the launcher SIGTERMs it to trigger teardown.
-"$WORK_DIR/venvs/controller/bin/python" -m iwb run \
-  --config "$CONFIG" \
-  --results-dir "$WORK_DIR/results" \
-  --connection "${IWB_CONNECTION:-default}" < /dev/null &
-pid=$!
-echo "$pid" > "$WORK_DIR/controller.pid"
-# The launcher creates the stop file before reading controller.pid, so if it stopped while this
-# script was still installing, the check below signals the controller instead.
-if [[ -e "$WORK_DIR/stop" ]]; then
-  kill -TERM "$pid" 2>/dev/null || true
-fi
-wait "$pid" || rc=$?
-
-# Stage mounts do not support truncate(), which Locust's CSV writer needs, so copy at the end.
-if [[ -n "${IWB_RESULTS_DIR:-}" ]] && ! cp -r "$WORK_DIR/results/." "$IWB_RESULTS_DIR/"; then
-  echo '{"iwb":"bootstrap","status":"results_copy_failed"}'
-  if [[ $rc -eq 0 ]]; then rc=1; fi
-fi
-exit "$rc"
+exec bash "$CODE_DIR/controller/run.sh" "$CONFIG"

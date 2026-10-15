@@ -1,9 +1,13 @@
 """Run one interactive benchmark in a Cortex Sandbox and print its events.
 
 Reference client for the sandbox host (the Snowsight integration does the same calls):
-create a sandbox as the given role, upload the API, Locust and controller sources with
-bootstrap.sh and the config, start `bash bootstrap.sh config.json` detached, relay its
+create a sandbox as the given role, start the controller detached, relay its
 `{"iwb": "event", ...}` lines until the final RUN event, then print result.json.
+
+With --image, the sandbox runs that benchmark image: only the config is uploaded, and the
+image's controller/run.sh runs it. Without it, the sandbox runs the default image: the API,
+Locust and controller sources from this checkout are uploaded with bootstrap.sh, which
+installs them from pypi.org first and then runs the same run.sh.
 
 The SDK's `code=`/`command=` path is not used: in snowflake-sandbox-python 0.2.2a4 it drops
 `role` and `idle_suspend`, runs the command before the bundle is extracted, and keeps the
@@ -14,6 +18,7 @@ See README.md in this directory.
 
 Usage:
   python launch.py --config run.json --connection my-conn [--role ROLE] [--results-stage DB.SCHEMA.STAGE]
+                   [--image /snowflake/images/snowflake_images/interactive-analytics/interactive-benchmark:TAG]
 """
 
 from __future__ import annotations
@@ -41,7 +46,9 @@ from iwb import budget  # noqa: E402  (dependency-free; shared with the controll
 WORK_DIR = "/var/tmp/iwb"
 CODE_DIR = f"{WORK_DIR}/code"
 RUN_LOG = f"{WORK_DIR}/run.log"
-BOOTSTRAP_RC = f"{WORK_DIR}/bootstrap.rc"
+RUN_RC = f"{WORK_DIR}/run.rc"
+CONFIG = f"{WORK_DIR}/config.json"
+IMAGE_RUN = "/app/controller/run.sh"
 CONTROLLER_PID = f"{WORK_DIR}/controller.pid"
 STOP_FILE = f"{WORK_DIR}/stop"
 RESULTS_MOUNT = "/iwb/results"
@@ -118,8 +125,8 @@ class _Relay:
         self.log = ""
 
     def poll(self) -> tuple[str, dict | None]:
-        """Return bootstrap's exit code ("" while running) and the final RUN event, if any."""
-        rc = self.sandbox.read_text(BOOTSTRAP_RC).strip()
+        """Return the run's exit code ("" while running) and the final RUN event, if any."""
+        rc = self.sandbox.read_text(RUN_RC).strip()
         self.log = self.sandbox.read_text(RUN_LOG)
         self.seen, final = relay_events(self.log, self.seen)
         return rc, final
@@ -128,12 +135,18 @@ class _Relay:
         return self.log[-4000:]
 
 
-def start(sandbox: Sandbox, bundle: Path) -> None:
+def start(sandbox: Sandbox, config: bytes, bundle: Path | None) -> None:
+    """Start the run detached; with no bundle, the sandbox image is the benchmark image."""
     _sh(sandbox, f"mkdir -p {CODE_DIR}")
-    sandbox.write_bytes(f"{WORK_DIR}/bundle.zip", zip_bundle(bundle))
-    _sh(sandbox, f"cd {CODE_DIR} && unzip -q -o {WORK_DIR}/bundle.zip && : > {RUN_LOG} && : > {BOOTSTRAP_RC}")
-    _sh(sandbox, f"cd {CODE_DIR} && setsid nohup bash -c 'bash bootstrap.sh config.json; echo $? > {BOOTSTRAP_RC}' "
-                 f">> {RUN_LOG} 2>&1 < /dev/null &")
+    if bundle is None:
+        sandbox.write_bytes(CONFIG, config)
+        command = f"bash {IMAGE_RUN} {CONFIG}"
+    else:
+        sandbox.write_bytes(f"{WORK_DIR}/bundle.zip", zip_bundle(bundle))
+        _sh(sandbox, f"cd {CODE_DIR} && unzip -q -o {WORK_DIR}/bundle.zip")
+        command = f"cd {CODE_DIR} && bash bootstrap.sh config.json"
+    _sh(sandbox, f": > {RUN_LOG} && : > {RUN_RC}")
+    _sh(sandbox, f"setsid nohup bash -c '{command}; echo $? > {RUN_RC}' >> {RUN_LOG} 2>&1 < /dev/null &")
 
 
 def wait(relay: _Relay, deadline: float) -> int:
@@ -155,7 +168,7 @@ def wait(relay: _Relay, deadline: float) -> int:
                 except SandboxError as exc:
                     sys.stderr.write(f"could not read {final['detail']['result']}: {exc}\n")
             if not final or int(rc) != int(final["detail"]["exit_code"]):
-                sys.stderr.write(f"bootstrap exited ({rc}); log tail:\n{relay.tail()}\n")
+                sys.stderr.write(f"run exited ({rc}); log tail:\n{relay.tail()}\n")
                 return int(rc) or 1
             return int(rc)
         if time.monotonic() > deadline:
@@ -164,22 +177,31 @@ def wait(relay: _Relay, deadline: float) -> int:
 
 
 def stop(relay: _Relay) -> None:
-    """Let the controller tear down before the sandbox is terminated."""
+    """Let the controller tear down before the sandbox is terminated, retrying transient SDK errors
+    as wait() does: giving up early would terminate the sandbox mid-teardown."""
     sys.stderr.write("stopping the controller so it can drop any warehouse it created\n")
-    try:
-        _sh(relay.sandbox, f"touch {STOP_FILE}; kill -TERM $(cat {CONTROLLER_PID} 2>/dev/null) 2>/dev/null || true")
-        deadline = time.monotonic() + STOP_GRACE.total_seconds()
-        while time.monotonic() < deadline:
+    deadline = time.monotonic() + STOP_GRACE.total_seconds()
+    signalled = False
+    failures = 0
+    while time.monotonic() < deadline:
+        try:
+            if not signalled:
+                _sh(relay.sandbox, f"touch {STOP_FILE}; kill -TERM $(cat {CONTROLLER_PID} 2>/dev/null) 2>/dev/null || true")
+                signalled = True
             if relay.poll()[0]:
                 return
-            time.sleep(POLL_SECONDS)
-        sys.stderr.write(f"controller did not exit within {STOP_GRACE}; check for IWB_* warehouses\n")
-    except SandboxError as exc:
-        sys.stderr.write(f"could not stop the controller ({exc}); check for IWB_* warehouses\n")
+            failures = 0
+        except SandboxError as exc:
+            failures += 1
+            if failures >= MAX_POLL_FAILURES:
+                sys.stderr.write(f"could not stop the controller ({exc}); check for IWB_* warehouses\n")
+                return
+        time.sleep(POLL_SECONDS)
+    sys.stderr.write(f"controller did not exit within {STOP_GRACE}; check for IWB_* warehouses\n")
 
 
-def run(sandbox: Sandbox, bundle: Path, deadline: float) -> int:
-    start(sandbox, bundle)
+def run(sandbox: Sandbox, config: bytes, bundle: Path | None, deadline: float) -> int:
+    start(sandbox, config, bundle)
     relay = _Relay(sandbox)
     try:
         return wait(relay, deadline)
@@ -198,24 +220,26 @@ def main() -> int:
     parser.add_argument("--connection", required=True, help="client-side connections.toml entry")
     parser.add_argument("--role", help="role the sandbox (and so the benchmark) runs as")
     parser.add_argument("--results-stage", help="optional stage to mount writable for results (DB.SCHEMA.NAME)")
-    parser.add_argument("--image", default="", help="catalog image; empty = deployment default")
+    parser.add_argument("--image", help="benchmark image to run; default: this checkout's sources on the "
+                                         "deployment's default sandbox image")
     args = parser.parse_args()
 
     signal.signal(signal.SIGTERM, _terminate)
     signal.signal(signal.SIGINT, _terminate)
-    config = json.loads(args.config.read_text())
+    config_bytes = args.config.read_bytes()
+    config = json.loads(config_bytes)
     run_time = run_budget(config)
     results_stage = args.results_stage.lstrip("@") if args.results_stage else None
-    env = {"IWB_RESULTS_DIR": RESULTS_MOUNT} if results_stage else {}
+    env = {"IWB_RESULTS_COPY_DIR": RESULTS_MOUNT} if results_stage else {}
     mounts = ([StageMount.from_stage(results_stage, mount_path=RESULTS_MOUNT, readonly=False)]
               if results_stage else None)
 
-    bundle = build_bundle(args.config)
+    bundle = None if args.image else build_bundle(args.config)
     sandbox = None
     try:
         sandbox = Sandbox.create(
             connection=args.connection,
-            image=args.image,
+            image=args.image or "",
             memory=memory_tier(int(config["concurrent_users"])),
             env=env,
             stage_mounts=mounts,
@@ -224,14 +248,15 @@ def main() -> int:
             tags={"app": "interactive-benchmark"},
         )
         print(json.dumps({"iwb": "launcher", "sandbox": sandbox.id, "role": args.role or "default"}), flush=True)
-        return run(sandbox, bundle, time.monotonic() + run_time.total_seconds())
+        return run(sandbox, config_bytes, bundle, time.monotonic() + run_time.total_seconds())
     finally:
         if sandbox is not None:
             try:
                 sandbox.terminate()
             except SandboxError as exc:
                 sys.stderr.write(f"could not terminate sandbox {sandbox.id}: {exc}\n")
-        shutil.rmtree(bundle, ignore_errors=True)
+        if bundle is not None:
+            shutil.rmtree(bundle, ignore_errors=True)
 
 
 if __name__ == "__main__":
