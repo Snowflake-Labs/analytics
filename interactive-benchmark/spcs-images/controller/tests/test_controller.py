@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -13,7 +14,7 @@ from unittest.mock import patch
 from snowflake.connector.errors import ProgrammingError
 
 from fakes import FakeSnow
-from iwb import config, metrics, runner, warehouse, workload
+from iwb import budget, config, metrics, runner, warehouse, workload
 from iwb.config import ConfigError, Context
 from iwb.events import Events
 from iwb.snow import session_token_connection
@@ -168,7 +169,8 @@ class WarehouseTest(unittest.TestCase):
         create = snow.ran(r"CREATE INTERACTIVE WAREHOUSE")[0]
         self.assertIn("IWB_RUN_IW TABLES (DB.S.T1, DB.S.T2)", create)
         self.assertIn("WAREHOUSE_SIZE = 'SMALL' MIN_CLUSTER_COUNT = 1 MAX_CLUSTER_COUNT = 3", create)
-        self.assertRegex(create, r"COMMENT = 'iwb:RUN:expires=\d+'")
+        expires = int(re.search(r"COMMENT = 'iwb:RUN:expires=(\d+)'", create).group(1))
+        self.assertGreater(expires, time.time() + budget.worst_case_seconds(cfg.run_seconds, cfg.concurrent_users))
         self.assertEqual(["ALTER WAREHOUSE IWB_RUN_IW SET FALLBACK_WAREHOUSE = STD"], snow.ran("FALLBACK"))
         self.assertTrue(wh.created)
         self.assertEqual("STD", wh.fallback)
@@ -202,6 +204,26 @@ class WarehouseTest(unittest.TestCase):
         warehouse.activate(cfg, snow, wh)
         warehouse.teardown(snow, wh, quiet_events())
         self.assertEqual(["ALTER WAREHOUSE IW RESUME IF SUSPENDED", "ALTER WAREHOUSE IW SUSPEND"], snow.ran("^ALTER"))
+
+    def test_stop_during_resume_still_suspends_again(self) -> None:
+        snow = (FakeSnow().on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "INTERACTIVE", "STATE": "SUSPENDED"}])
+                .on(r"^ALTER WAREHOUSE IW RESUME", SystemExit(143)))
+        cfg = config.parse(base())
+        wh = prepare(cfg, snow)
+        with self.assertRaises(SystemExit):
+            warehouse.activate(cfg, snow, wh)
+        warehouse.teardown(snow, wh, quiet_events())
+        self.assertEqual(["ALTER WAREHOUSE IW SUSPEND"], snow.ran("SUSPEND$"))
+
+    def test_failed_create_is_not_dropped(self) -> None:
+        snow = FakeSnow().on(r"^CREATE INTERACTIVE", ProgrammingError(msg="already exists", errno=2002))
+        cfg = config.parse(base(warehouse={"create": {"size": "XSMALL"}}))
+        wh = warehouse.planned(cfg, "RUN")
+        with self.assertRaises(ProgrammingError):
+            warehouse.prepare(cfg, snow, set(), wh, "RUN", quiet_events())
+        warehouse.teardown(snow, wh, quiet_events())
+        self.assertFalse(wh.created)
+        self.assertEqual([], snow.ran("^DROP"))
 
     def test_suspended_existing_warehouse_the_role_cannot_resume(self) -> None:
         snow = (FakeSnow().on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "INTERACTIVE", "STATE": "SUSPENDED"}])
@@ -331,6 +353,34 @@ class CliTeardownTest(unittest.TestCase):
         self.assertEqual(1, len(snow.ran(r"^DROP WAREHOUSE")))
         self.assert_final_event(143)
 
+    def test_relative_results_root_is_made_absolute_for_the_api(self) -> None:
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(tempfile.mkdtemp())
+        seen = []
+
+        def run_load(cfg, queries, wh, run_id, connection, results_dir, events):
+            seen.append(results_dir)
+            raise SystemExit(143)
+
+        cfg_path = Path(tempfile.mkdtemp()) / "run.json"
+        cfg_path.write_text(json.dumps(base()))
+        snow = (FakeSnow().on(r"EXPLAIN_PLAN_JSON", [{"PLAN": "{}"}])
+                .on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "INTERACTIVE", "STATE": "STARTED"}]))
+        with patch("iwb.cli.connect", return_value=snow), patch("iwb.runner.run_load", side_effect=run_load), \
+                patch("sys.stdout", io.StringIO()):
+            from iwb import cli
+            cli.run(str(cfg_path), "relative-results", "conn")
+        self.assertTrue(seen[0].is_absolute())
+
+    def test_first_stop_ignores_later_ones(self) -> None:
+        from iwb import cli
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            self.addCleanup(signal.signal, sig, signal.getsignal(sig))
+        with self.assertRaises(SystemExit):
+            cli._terminate(signal.SIGTERM, None)
+        self.assertEqual([signal.SIG_IGN] * 2, [signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)])
+
     def test_config_error_is_reported_under_its_step(self) -> None:
         snow = FakeSnow().on(r"SHOW PARAMETERS", [{"VALUE": "OTHER"}])
         code, _, _ = self.run_cli(None, None, snow, warehouse={"existing": "IW_IW"}, fallback_warehouse="STD")
@@ -364,6 +414,19 @@ class SessionTokenConnectionTest(unittest.TestCase):
         with patch.dict(os.environ, {**env, "SNOWFLAKE_HOST": "acme.internal"}):
             self.assertIn('host = "acme.internal"', session_token_connection("default").read_text())
 
+    def test_connect_names_the_rendered_file(self) -> None:
+        # The connector read SNOWFLAKE_HOME at import, so the rendered file must be passed explicitly.
+        token = Path(tempfile.mkdtemp()) / "token"
+        token.write_text("t")
+        env = {"SNOWFLAKE_ACCOUNT": "ACME", "SNOWFLAKE_ACCOUNT_URL": "acme_x.example.com:443",
+               "SNOWFLAKE_TOKEN_FILE_PATH": str(token)}
+        with patch.dict(os.environ, env), patch("iwb.snow.snowflake.connector.connect") as connect:
+            from iwb.snow import connect as snow_connect
+            snow_connect("default")
+        path = connect.call_args.kwargs["connections_file_path"]
+        self.assertIn('host = "acme_x.example.com"\n', path.read_text())
+        self.assertEqual("default", connect.call_args.kwargs["connection_name"])
+
     def test_no_session_token_uses_the_named_connection(self) -> None:
         with patch.dict(os.environ, {"SNOWFLAKE_ACCOUNT": "ACME", "SNOWFLAKE_ACCOUNT_URL": "acme.example.com",
                                      "SNOWFLAKE_TOKEN_FILE_PATH": "/nonexistent/token"}):
@@ -378,12 +441,14 @@ class RunLoadTest(unittest.TestCase):
         queries = [workload.Query("q01", "select 1", 100, Context("DB", "S"), "sql")]
         env = {"IWB_API_PYTHON": sys.executable, "IWB_API_SERVER": str(tmp / "api.py"),
                "IWB_LOCUST_ENTRYPOINT": str(tmp / "locust.sh")}
+        out = io.StringIO()
         started = time.monotonic()
-        with patch.dict(os.environ, env), patch("iwb.runner.API_POLL_SECONDS", 0.05), \
-                self.assertRaisesRegex(RuntimeError, r"API server exited \(3\)"):
-            runner.run_load(config.parse(base()), queries, warehouse.Warehouse("IW", created=False), "RUN",
-                            "conn", tmp, quiet_events())
+        with patch.dict(os.environ, env), patch("iwb.runner.API_POLL_SECONDS", 0.05):
+            load = runner.run_load(config.parse(base()), queries, warehouse.Warehouse("IW", created=False), "RUN",
+                                   "conn", tmp, Events("RUN", out))
         self.assertLess(time.monotonic() - started, 30)
+        self.assertEqual(runner.API_EXITED, load.outcome)
+        self.assertIn('"step": "LOAD", "status": "failed"', out.getvalue())
 
 
 class WarmTest(unittest.TestCase):

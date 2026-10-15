@@ -35,6 +35,9 @@ def _run_id(name: object) -> str:
 
 
 def _terminate(signum: int, _frame: object) -> None:
+    """The first stop request ends the run; later ones must not interrupt its cleanup."""
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, signal.SIG_IGN)
     raise SystemExit(128 + signum)
 
 
