@@ -41,25 +41,42 @@ class FakeSandbox:
         self.commands.append(cmd[-1])
         if "kill -TERM" in cmd[-1]:
             self.files[launch.RUN_LOG] += "\n" + event("TEARDOWN", "completed")
-            self.files[launch.BOOTSTRAP_RC] = "143\n"
+            self.files[launch.RUN_RC] = "143\n"
         return types.SimpleNamespace(stdout="")
 
 
 def finished(rc, exit_code):
     return {
-        launch.BOOTSTRAP_RC: rc,
+        launch.RUN_RC: rc,
         launch.RUN_LOG: event("RUN", "completed", exit_code=exit_code, result="/r.json"),
         "/r.json": '{"exit_code": 0}',
     }
 
 
 class LaunchTest(unittest.TestCase):
+    def test_image_mode_uploads_only_the_config_and_runs_the_entrypoint(self) -> None:
+        sandbox = FakeSandbox({})
+        sandbox.write_bytes = lambda path, data: sandbox.files.__setitem__(path, data)
+        launch.start(sandbox, b'{"run_minutes": 1}', None)
+        self.assertEqual({launch.CONFIG: b'{"run_minutes": 1}'}, sandbox.files)
+        self.assertIn(f"bash -c 'bash {launch.IMAGE_RUN} {launch.CONFIG}; echo $? > {launch.RUN_RC}'",
+                      sandbox.commands[-1])
+
+    def test_bundle_mode_runs_bootstrap_from_the_unpacked_bundle(self) -> None:
+        sandbox = FakeSandbox({})
+        sandbox.write_bytes = lambda path, data: sandbox.files.__setitem__(path, data)
+        with mock.patch.object(launch, "zip_bundle", return_value=b"zip"):
+            launch.start(sandbox, b"{}", Path("/bundle"))
+        self.assertEqual(b"zip", sandbox.files[f"{launch.WORK_DIR}/bundle.zip"])
+        self.assertIn(f"cd {launch.CODE_DIR} && bash bootstrap.sh config.json; echo $? > {launch.RUN_RC}",
+                      sandbox.commands[-1])
+
     def test_bundle_has_sources_bootstrap_and_config_without_venvs(self) -> None:
         config = Path(tempfile.mkdtemp()) / "run.json"
         config.write_text('{"run_minutes": 1}')
         bundle = launch.build_bundle(config)
         for path in ("bootstrap.sh", "config.json", "api/server.py", "api/uv.lock",
-                     "locust/entrypoint.sh", "locust/uv.lock", "controller/iwb/cli.py",
+                     "locust/entrypoint.sh", "locust/uv.lock", "controller/iwb/cli.py", "controller/run.sh",
                      "controller/iwb/iwb-config.schema.json", "controller/uv.lock"):
             self.assertTrue((bundle / path).is_file(), path)
         self.assertFalse(any(p.name == ".venv" for p in bundle.rglob("*")))
@@ -113,14 +130,25 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual(0, launch.wait(launch._Relay(sandbox), deadline=float("inf")))
 
     def test_deadline_stops_controller_before_raising(self) -> None:
-        sandbox = FakeSandbox({launch.BOOTSTRAP_RC: "", launch.RUN_LOG: event("LOAD", "started")})
+        sandbox = FakeSandbox({launch.RUN_RC: "", launch.RUN_LOG: event("LOAD", "started")})
         with mock.patch.object(launch, "start"), mock.patch.object(launch.time, "sleep"), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(TimeoutError):
-                launch.run(sandbox, Path("/unused"), deadline=0)
+                launch.run(sandbox, b"{}", Path("/unused"), deadline=0)
         stop = next(c for c in sandbox.commands if "kill -TERM" in c)
         self.assertLess(stop.index(f"touch {launch.STOP_FILE}"), stop.index(launch.CONTROLLER_PID))
-        self.assertEqual("143\n", sandbox.files[launch.BOOTSTRAP_RC])
+        self.assertEqual("143\n", sandbox.files[launch.RUN_RC])
+
+    def test_stop_retries_transient_failures_until_teardown_ends(self) -> None:
+        sandbox = FakeSandbox({launch.RUN_RC: "", launch.RUN_LOG: event("LOAD", "started")},
+                              read_failures=launch.MAX_POLL_FAILURES - 1)
+        err = io.StringIO()
+        with mock.patch.object(launch.time, "sleep"), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(err):
+            launch.stop(launch._Relay(sandbox))
+        self.assertEqual("143\n", sandbox.files[launch.RUN_RC])
+        self.assertNotIn("could not stop", err.getvalue())
+        self.assertEqual(1, sum("kill -TERM" in c for c in sandbox.commands))
 
     def test_budget_is_whole_minutes_above_the_controller_worst_case(self) -> None:
         run_time = launch.run_budget({"run_minutes": 1.5, "concurrent_users": 10})
