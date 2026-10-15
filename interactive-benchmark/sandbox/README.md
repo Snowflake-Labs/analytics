@@ -25,7 +25,7 @@ python3 -m venv .venv
   [--image /snowflake/images/snowflake_images/interactive-analytics/interactive-benchmark:<tag>]
 ```
 
-`--image` needs an image with the controller role (0.3.0 or later).
+`--image` needs an image with `controller/run.sh` (0.3.0 or later).
 
 Pin the SDK: it is published only as pre-releases, and the launcher works around 0.2.2a4
 behaviour (see [How it works](#how-it-works)).
@@ -79,7 +79,7 @@ the run progresses, then `result.json`:
 | `client` | Locust's view of the benchmark: requests, failures, req/s, latency percentiles. Includes the API and network overhead |
 | `server` | The same window from `INFORMATION_SCHEMA.QUERY_HISTORY_BY_WAREHOUSE`, filtered to the run's query tag: `n`, `n_failed`, `n_fallback`, percentiles of total elapsed time, `p95_interactive_only_ms`, average compile/exec/queue time and `clusters_used`. **Use these for warehouse latency** |
 | `window` | Epoch seconds of the measured window (full load only, ramp-up excluded) |
-| `error`, `teardown_error` | Why the run failed, and why a created warehouse could not be dropped (only when that happened) |
+| `error`, `teardown_error` | Why the run failed, and why teardown failed: a created warehouse not dropped, or an existing one not suspended again (only when that happened) |
 | `workload`, `warehouse` | The resolved queries (ids `q01`…, weights, context) and the warehouse used |
 
 `server` counts only statements that ended inside `window`. `client` comes from Locust's
@@ -109,7 +109,7 @@ which `GET` downloads as a `.part#...` file; ignore it.
 | 0 | Completed |
 | 20 | Benchmark verdict FAIL (no queries ran, or failures above 1%); numbers are not valid |
 | 30 | Invalid config, or missing access (the event says what) |
-| 40 | Infrastructure (API not ready, baseline gate failed) |
+| 40 | Infrastructure (API not ready or exited during the load, baseline gate failed) |
 | 1 | Unexpected error (see the `RUN failed` event), a failed results copy (`results_copy_failed`), or a launcher error |
 | 64, 65 | `bootstrap.sh` or `run.sh` usage error, or an incomplete bundle |
 | 143, 130 | Launcher stopped by SIGTERM or SIGINT; the controller tore down first (a deadline exits 1 after the same teardown) |
@@ -170,12 +170,14 @@ host such as Snowsight. Use image `/snowflake/images/snowflake_images/interactiv
 - **Connection**: the controller connects with the session token at `/snowflake/session/token`
   (or `SNOWFLAKE_TOKEN_FILE_PATH`), using `SNOWFLAKE_ACCOUNT` and the host from `SNOWFLAKE_HOST`
   or `SNOWFLAKE_ACCOUNT_URL`. It uses the account host as given; the hyphenated form is rejected
-  by the egress proxy for account names with underscores. If neither host variable is set, it
-  uses the `default` entry in `$SNOWFLAKE_HOME/connections.toml` instead. `SNOWFLAKE_ROLE`, if
-  set, is the role.
+  by the egress proxy for account names with underscores. Without a readable token, the account,
+  or a host, it uses the connection named by `--connection` (default `default`) in
+  `$SNOWFLAKE_HOME/connections.toml`. `SNOWFLAKE_ROLE`, if set, is the role.
 - **Progress**: stdout has one JSON event per line, `{"iwb": "event", "seq": n, "step": ..., "status": ..., "detail": {...}}`,
-  with `seq` counting from 1. Skip other lines. The last event is `RUN` with `detail.exit_code`
-  and `detail.result`, the path of `result.json`.
+  with `seq` counting from 1. Skip other lines. Only the last event, `RUN` with
+  `detail.exit_code` and `detail.result` (the path of `result.json`), or the process exiting,
+  ends the run. A step's `failed` event does not: teardown, which drops a created warehouse,
+  still follows, so keep the sandbox until then.
 - **Result**: `$IWB_RESULTS_DIR/<run_id>/result.json` (default `/var/tmp/iwb/results`). The
   process's exit code is in [Exit codes](#exit-codes).
 - **Cancel**: send SIGTERM to that process and give it up to 5 minutes to exit before removing
@@ -196,7 +198,7 @@ Without `--image`:
 
 1. The launcher creates a sandbox, uploads a zipped bundle (`spcs-images/{api,locust,controller}` plus `bootstrap.sh` and your config) and unpacks it.
 2. It starts `bootstrap.sh` detached. The script installs the pinned dependencies from the `uv.lock` files (pypi.org only; the sandbox cannot reach internal mirrors).
-3. `bootstrap.sh` then runs `controller/run.sh config.json`, as the image does with `BENCHMARK_ROLE=controller`.
+3. `bootstrap.sh` then runs `controller/run.sh config.json`, which starts the same controller as the image's `controller` role.
 4. The launcher relays events from the run log until the controller exits, prints `result.json`, then terminates the sandbox.
 
 With `--image`, steps 1 to 3 are those of [Running the benchmark image](#running-the-benchmark-image).

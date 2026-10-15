@@ -177,12 +177,14 @@ def wait(relay: _Relay, deadline: float) -> int:
 
 
 def stop(relay: _Relay) -> None:
-    """Let the controller tear down before the sandbox is terminated, retrying transient SDK errors
-    as wait() does: giving up early would terminate the sandbox mid-teardown."""
+    """Let the controller tear down before the sandbox is terminated. SDK errors and further stop
+    requests are ignored until STOP_GRACE ends: giving up early terminates the sandbox mid-teardown."""
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, signal.SIG_IGN)
     sys.stderr.write("stopping the controller so it can drop any warehouse it created\n")
     deadline = time.monotonic() + STOP_GRACE.total_seconds()
     signalled = False
-    failures = 0
+    error = None
     while time.monotonic() < deadline:
         try:
             if not signalled:
@@ -190,14 +192,11 @@ def stop(relay: _Relay) -> None:
                 signalled = True
             if relay.poll()[0]:
                 return
-            failures = 0
         except SandboxError as exc:
-            failures += 1
-            if failures >= MAX_POLL_FAILURES:
-                sys.stderr.write(f"could not stop the controller ({exc}); check for IWB_* warehouses\n")
-                return
+            error = exc
         time.sleep(POLL_SECONDS)
-    sys.stderr.write(f"controller did not exit within {STOP_GRACE}; check for IWB_* warehouses\n")
+    reason = f"last error: {error}" if error else "no exit"
+    sys.stderr.write(f"controller did not finish teardown within {STOP_GRACE} ({reason}); check for IWB_* warehouses\n")
 
 
 def run(sandbox: Sandbox, config: bytes, bundle: Path | None, deadline: float) -> int:

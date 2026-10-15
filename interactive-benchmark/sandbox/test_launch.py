@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import re
+import signal
 import sys
 import tempfile
 import types
@@ -139,15 +140,18 @@ class LaunchTest(unittest.TestCase):
         self.assertLess(stop.index(f"touch {launch.STOP_FILE}"), stop.index(launch.CONTROLLER_PID))
         self.assertEqual("143\n", sandbox.files[launch.RUN_RC])
 
-    def test_stop_retries_transient_failures_until_teardown_ends(self) -> None:
+    def test_stop_retries_sdk_failures_until_teardown_ends(self) -> None:
         sandbox = FakeSandbox({launch.RUN_RC: "", launch.RUN_LOG: event("LOAD", "started")},
-                              read_failures=launch.MAX_POLL_FAILURES - 1)
+                              read_failures=launch.MAX_POLL_FAILURES * 3)
         err = io.StringIO()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            self.addCleanup(signal.signal, sig, signal.getsignal(sig))
         with mock.patch.object(launch.time, "sleep"), contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(err):
             launch.stop(launch._Relay(sandbox))
-        self.assertEqual("143\n", sandbox.files[launch.RUN_RC])
-        self.assertNotIn("could not stop", err.getvalue())
+        self.assertEqual(signal.SIG_IGN, signal.getsignal(signal.SIGINT))
+        self.assertEqual(0, sandbox.read_failures)  # retried past every failure, then saw the exit
+        self.assertNotIn("did not finish", err.getvalue())
         self.assertEqual(1, sum("kill -TERM" in c for c in sandbox.commands))
 
     def test_budget_is_whole_minutes_above_the_controller_worst_case(self) -> None:
