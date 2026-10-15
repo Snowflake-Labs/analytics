@@ -161,14 +161,26 @@ class WarehouseTest(unittest.TestCase):
         self.assertRegex(create, r"COMMENT = 'iwb:RUN:expires=\d+'")
         self.assertEqual(["ALTER WAREHOUSE IWB_RUN_IW SET FALLBACK_WAREHOUSE = STD"], snow.ran("FALLBACK"))
         self.assertTrue(wh.created)
+        self.assertEqual("STD", wh.fallback)
 
     def test_existing_is_never_altered_beyond_resume(self) -> None:
-        snow = FakeSnow().on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "INTERACTIVE", "STATE": "STARTED"}])
-        cfg = config.parse(base(fallback_warehouse="STD"))
+        snow = (FakeSnow().on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "INTERACTIVE", "STATE": "STARTED"}])
+                .on(r"SHOW PARAMETERS LIKE 'FALLBACK_WAREHOUSE' IN WAREHOUSE IW", [{"VALUE": "STD"}]))
+        cfg = config.parse(base(fallback_warehouse="std"))
         wh = warehouse.prepare(cfg, snow, set(), "RUN", quiet_events())
         warehouse.activate(cfg, snow, wh)
         warehouse.teardown(snow, wh, quiet_events())
         self.assertEqual(["ALTER WAREHOUSE IW RESUME IF SUSPENDED"], snow.ran("^ALTER"))
+
+    def test_existing_measures_its_own_fallback(self) -> None:
+        snow = (FakeSnow().on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "INTERACTIVE", "STATE": "STARTED"}])
+                .on(r"SHOW PARAMETERS", [{"VALUE": "STD"}]))
+        self.assertEqual("STD", warehouse.prepare(config.parse(base()), snow, set(), "RUN", quiet_events()).fallback)
+        for configured in ([{"VALUE": "OTHER"}], [{"VALUE": ""}], []):
+            snow = (FakeSnow().on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "INTERACTIVE", "STATE": "STARTED"}])
+                    .on(r"SHOW PARAMETERS", configured))
+            with self.subTest(configured), self.assertRaisesRegex(ConfigError, "only set on created warehouses"):
+                warehouse.prepare(config.parse(base(fallback_warehouse="STD")), snow, set(), "RUN", quiet_events())
 
     def test_existing_suspended_warehouse_is_suspended_again(self) -> None:
         states = iter(["SUSPENDED", "SUSPENDED"])

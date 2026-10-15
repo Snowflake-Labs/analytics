@@ -164,7 +164,7 @@
     "fallback_warehouse": {
       "type": "string",
       "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$",
-      "description": "Optional standard warehouse for statements that hit the 5 s interactive timeout. Without it those statements fail and count against the failure gate."
+      "description": "Optional standard warehouse for statements that hit the 5 s interactive timeout, set on a created warehouse. Without it those statements fail and count against the failure gate. With warehouse.existing, that warehouse's own FALLBACK_WAREHOUSE is used and measured; a different value here is rejected."
     },
     "lookup_warehouse": {
       "type": "string",

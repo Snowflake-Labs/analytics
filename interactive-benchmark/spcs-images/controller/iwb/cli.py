@@ -88,7 +88,7 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
             start, end = load.window
             result["window"] = {"start": start, "end": end}
             result["server"] = metrics.server_side(
-                snow, cfg.context.database, wh.name, cfg.fallback_warehouse, run_id, start, end,
+                snow, cfg.context.database, wh.name, wh.fallback, run_id, start, end,
             )
             events.emit("MEASURE", "completed", server=result["server"])
 
