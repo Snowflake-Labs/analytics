@@ -2,6 +2,7 @@
 
 STARTED_TIMEOUT_SECONDS = 900
 API_READY_TIMEOUT_SECONDS = 600
+BASELINE_SECONDS = 60
 # Validation, compile checks, warm-up and teardown.
 OTHER_STEPS_SECONDS = 900
 # Reading query history grows with the window: up to a few history queries per minute of run.
@@ -13,8 +14,8 @@ def run_seconds(run_minutes: float) -> int:
 
 
 def locust_timeout_seconds(run_secs: int, users: int) -> int:
-    """API readiness, the 1-minute baseline, the run, ramp-up of both phases, and shutdown slack."""
-    return API_READY_TIMEOUT_SECONDS + 60 + run_secs + 2 * users + 600
+    """API readiness, the baseline, the run, ramp-up of both phases, and shutdown slack."""
+    return API_READY_TIMEOUT_SECONDS + BASELINE_SECONDS + run_secs + 2 * users + 600
 
 
 def worst_case_seconds(run_secs: int, users: int) -> int:

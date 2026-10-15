@@ -13,7 +13,6 @@ from iwb.snow import Snow
 
 PLAIN_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 HISTORY_COLUMNS = "QUERY_ID, QUERY_TEXT, DATABASE_NAME, SCHEMA_NAME, QUERY_TYPE, EXECUTION_STATUS"
-NOT_FOUND_OR_UNAUTHORIZED = 2003
 
 
 def ident(name: str) -> str:
@@ -63,7 +62,7 @@ def _from_monitoring(snow: Snow, query_id: str) -> dict | None:
 
 def _from_account_usage(snow: Snow, query_ids: list[str], lookup_warehouse: str) -> list[dict]:
     try:
-        snow.execute(f"USE WAREHOUSE {ident(lookup_warehouse)}")
+        use_warehouse(snow, lookup_warehouse)
         return snow.rows(
             f"SELECT {HISTORY_COLUMNS} FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY "
             f"WHERE QUERY_ID IN ({', '.join(['%s'] * len(query_ids))})",
@@ -139,6 +138,10 @@ def resolve(cfg: Config, snow: Snow) -> list[Query]:
 
 def use_context(snow: Snow, context: Context) -> None:
     snow.execute(f"USE SCHEMA {qualified(context)}")
+
+
+def use_warehouse(snow: Snow, name: str) -> None:
+    snow.execute(f"USE WAREHOUSE {ident(name)}")
 
 
 def explain_plan(snow: Snow, q: Query) -> dict:
