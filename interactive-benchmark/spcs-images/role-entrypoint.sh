@@ -14,6 +14,8 @@ case "${BENCHMARK_ROLE:-}" in
     exec "$LOCUST_ENTRYPOINT" "$@"
     ;;
   controller)
+    # /app is not writable at runtime, so the default results directory must not be under it.
+    export IWB_RESULTS_DIR="${IWB_RESULTS_DIR:-/var/tmp/iwb/results}"
     cd /app/controller
     exec "$CONTROLLER_PYTHON" -m iwb "$@"
     ;;

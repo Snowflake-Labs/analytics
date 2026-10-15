@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from snowflake.connector.errors import ProgrammingError
 
+from iwb import budget
 from iwb.budget import STARTED_TIMEOUT_SECONDS
 from iwb.config import Config, ConfigError, Context
 from iwb.events import Events
@@ -62,10 +63,16 @@ def cleanup_stale(snow: Snow, events: Events, now: float | None = None) -> None:
             events.emit("CLEANUP", "completed", dropped=row["NAME"], stale_run_id=match.group(1))
 
 
-def prepare(cfg: Config, snow: Snow, tables: set[str], run_id: str, events: Events) -> Warehouse:
-    """Verify the existing warehouse, or create one. Returns as soon as a created warehouse
-    exists, so the caller can always drop it; activate() does everything that can fail after."""
+def planned(cfg: Config, run_id: str) -> Warehouse:
+    """The warehouse the run uses, named before it is created so that teardown can always drop it."""
     if cfg.existing_warehouse:
+        return Warehouse(cfg.existing_warehouse, created=False)
+    return Warehouse(f"{STALE_PREFIX}{run_id}_IW", created=True, fallback=cfg.fallback_warehouse)
+
+
+def prepare(cfg: Config, snow: Snow, tables: set[str], wh: Warehouse, run_id: str, events: Events) -> None:
+    """Verify the existing warehouse, or create the planned one; activate() does the rest."""
+    if not wh.created:
         row = _show(snow, cfg.existing_warehouse)
         if row is None:
             raise ConfigError(f"Warehouse {cfg.existing_warehouse} does not exist or is not visible to this role")
@@ -81,27 +88,34 @@ def prepare(cfg: Config, snow: Snow, tables: set[str], run_id: str, events: Even
         if not_attached:
             events.emit("SETUP_WAREHOUSE", "warning", reason="tables not attached; reads are not cached",
                         tables=not_attached)
-        return Warehouse(row["NAME"], created=False, tables=_attached(row), fallback=fallback)
+        wh.name, wh.tables, wh.fallback = row["NAME"], _attached(row), fallback
+        return
     new = cfg.new_warehouse
     assert new is not None
     cleanup_stale(snow, events)
-    name = f"{STALE_PREFIX}{run_id}_IW"
-    expires = int(time.time()) + cfg.run_seconds + 3 * 3600
+    # Later runs drop it as stale only after this run's worst case, plus an hour.
+    expires = int(time.time()) + budget.worst_case_seconds(cfg.run_seconds, cfg.concurrent_users) + 3600
     tables_clause = f"TABLES ({', '.join(sorted(tables))}) " if tables else ""
     snow.execute(
-        f"CREATE INTERACTIVE WAREHOUSE {ident(name)} {tables_clause}"
+        f"CREATE INTERACTIVE WAREHOUSE {ident(wh.name)} {tables_clause}"
         f"WAREHOUSE_SIZE = '{new.size}' MIN_CLUSTER_COUNT = {new.min_cluster_count} "
         f"MAX_CLUSTER_COUNT = {new.max_cluster_count} AUTO_SUSPEND = 86400 AUTO_RESUME = TRUE "
         f"COMMENT = '{COMMENT_PREFIX}{run_id}:expires={expires}'"
     )
-    events.emit("SETUP_WAREHOUSE", "created", warehouse=name, tables=sorted(tables))
-    return Warehouse(name, created=True, tables={t.upper() for t in tables}, fallback=cfg.fallback_warehouse)
+    wh.tables = {t.upper() for t in tables}
+    events.emit("SETUP_WAREHOUSE", "created", warehouse=wh.name, tables=sorted(tables))
 
 
 def activate(cfg: Config, snow: Snow, wh: Warehouse) -> None:
-    row = _show(snow, wh.name)
-    wh.resumed = bool(row) and row.get("STATE") == "SUSPENDED"
-    snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} RESUME IF SUSPENDED")
+    if wh.created:
+        snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} RESUME IF SUSPENDED")
+    elif (row := _show(snow, wh.name)) and row.get("STATE") == "SUSPENDED":
+        # Resuming needs OPERATE; a started warehouse needs only USAGE, so only resume a suspended one.
+        try:
+            snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} RESUME IF SUSPENDED")
+        except ProgrammingError as exc:
+            raise ConfigError(f"Warehouse {wh.name} is suspended and this role cannot resume it: {exc.msg}") from exc
+        wh.resumed = True
     if cfg.fallback_warehouse and wh.created:
         snow.execute(f"ALTER WAREHOUSE {ident(wh.name)} SET FALLBACK_WAREHOUSE = {ident(cfg.fallback_warehouse)}")
     wait_started(snow, wh.name)
