@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import secrets
 import signal
 import sys
@@ -13,11 +12,12 @@ import traceback
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from iwb import config as config_module
 from iwb import metrics, runner, warehouse, workload
 from iwb.config import ConfigError
-from iwb.events import Events
+from iwb.events import Events, now_iso
 from iwb.snow import connect
 
 EXIT_OK = 0
@@ -30,7 +30,7 @@ RESULT_SCHEMA_VERSION = 1
 
 def _run_id(name: object) -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-    prefix = name.upper() if isinstance(name, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,30}", name) else "IWB"
+    prefix = name.upper() if isinstance(name, str) and config_module.NAME_PATTERN.fullmatch(name) else "IWB"
     return f"{prefix}_{stamp}_{secrets.token_hex(2).upper()}"
 
 
@@ -41,25 +41,29 @@ def _terminate(signum: int, _frame: object) -> None:
     raise SystemExit(128 + signum)
 
 
-def run(config_path: str, results_root: str, connection_name: str) -> int:
-    raw_name = None
+def _read(config_path: str) -> Any:
     try:
-        raw_name = json.loads(Path(config_path).read_text()).get("name")
-    except (OSError, json.JSONDecodeError, AttributeError):
-        pass
-    run_id = _run_id(raw_name)
+        return json.loads(Path(config_path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def run(config_path: str, results_root: str, connection_name: str) -> int:
+    raw = _read(config_path)
+    run_id = _run_id(raw.get("name") if isinstance(raw, dict) else None)
     # Absolute: the API server, which reads workload.json from here, runs in another directory.
     results_dir = Path(results_root).resolve() / run_id
     events = Events(run_id)
     result: dict = {"schema_version": RESULT_SCHEMA_VERSION, "run_id": run_id,
-                    "started_at": datetime.now(UTC).isoformat(timespec="seconds")}
+                    "started_at": now_iso()}
     exit_code = EXIT_CRASH
     snow = None
     wh = None
     try:
         results_dir.mkdir(parents=True, exist_ok=True)
         events.emit("VALIDATE", "started", config=config_path)
-        cfg = config_module.load(config_path)
+        # load() reports why the file could not be read.
+        cfg = config_module.parse(raw) if raw is not None else config_module.load(config_path)
         snow = connect(connection_name)
         queries = workload.resolve(cfg, snow)
         tables = workload.discover_tables(snow, queries)
@@ -104,11 +108,11 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         exit_code = EXIT_INVALID
     except SystemExit as exc:
         result["error"] = f"terminated (exit {exc.code})"
-        events.emit("RUN", "failed", error=result["error"])
+        events.emit(events.step, "failed", error=result["error"])
         exit_code = int(exc.code) if isinstance(exc.code, int) else EXIT_CRASH
     except Exception as exc:  # noqa: BLE001 - reported as an event and in result.json
         result["error"] = f"{type(exc).__name__}: {exc}"
-        events.emit("RUN", "failed", error=result["error"], traceback=traceback.format_exc())
+        events.emit(events.step, "failed", error=result["error"], traceback=traceback.format_exc())
         exit_code = EXIT_CRASH
     finally:
         # A second stop request must not interrupt teardown or the result.
@@ -128,7 +132,7 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
             except Exception:  # noqa: BLE001 - the run is over; never lose result.json for this
                 pass
         result["exit_code"] = exit_code
-        result["finished_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+        result["finished_at"] = now_iso()
         results_dir.mkdir(parents=True, exist_ok=True)
         (results_dir / "result.json").write_text(json.dumps(result, indent=2, default=str))
         events.emit("RUN", "completed" if exit_code == EXIT_OK else "failed", exit_code=exit_code,
@@ -143,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     run_p = sub.add_parser("run", help="Run one benchmark from a config file")
     run_p.add_argument("--config", required=True)
-    run_p.add_argument("--results-dir", default=os.environ.get("IWB_RESULTS_DIR", "iwb-results"))
+    run_p.add_argument("--results-dir", default=os.environ.get("IWB_RESULTS_DIR", "/var/tmp/iwb/results"))
     run_p.add_argument("--connection", default=os.environ.get("IWB_CONNECTION", "default"),
                        help="connections.toml entry (the sandbox renders `default`)")
     args = parser.parse_args(argv)

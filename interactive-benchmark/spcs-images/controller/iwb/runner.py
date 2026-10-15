@@ -15,14 +15,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from iwb.budget import API_READY_TIMEOUT_SECONDS, locust_timeout_seconds
-from iwb.config import Config
-from iwb.events import Events
 from snowflake.connector.errors import DatabaseError
 
+from iwb.budget import API_READY_TIMEOUT_SECONDS, BASELINE_SECONDS, locust_timeout_seconds
+from iwb.config import Config
+from iwb.events import Events
 from iwb.snow import STATEMENT_TIMEOUT, Snow
 from iwb.warehouse import Warehouse
-from iwb.workload import Query, ident, use_context
+from iwb.workload import Query, use_context, use_warehouse
 
 WARMUP_ROUNDS = 3
 STOP_GRACE_SECONDS = 30
@@ -44,7 +44,7 @@ class LoadResult:
 
 
 def warm(snow: Snow, wh: Warehouse, queries: list[Query], events: Events) -> None:
-    snow.execute(f"USE WAREHOUSE {ident(wh.name)}")
+    use_warehouse(snow, wh.name)
     for round_no in range(1, WARMUP_ROUNDS + 1):
         slowest_ms = 0
         for q in queries:
@@ -175,6 +175,7 @@ def run_load(
         "LOCUST_USERS": str(cfg.concurrent_users),
         "LOCUST_SPAWN": str(min(cfg.concurrent_users, 10)),
         "LOCUST_RUN_TIME": f"{cfg.run_seconds}s",
+        "BASELINE_RUN_TIME": f"{BASELINE_SECONDS}s",
         "LOCUST_WEB_PORT": str(_free_port()),
         "API_READY_TIMEOUT_SECONDS": str(API_READY_TIMEOUT_SECONDS),
         "BENCHMARK_EXIT_AFTER_RUN": "1",

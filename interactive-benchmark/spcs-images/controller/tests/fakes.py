@@ -1,9 +1,11 @@
 import re
+from collections.abc import Iterator
 from typing import Any
 
 
 class FakeSnow:
-    """Answers SQL by the first matching regex; records every statement."""
+    """Answers SQL by the first matching regex; records every statement. An iterator answer gives its
+    next item on each match; an exception answer is raised."""
 
     def __init__(self) -> None:
         self.handlers: list[tuple[re.Pattern, Any]] = []
@@ -17,6 +19,8 @@ class FakeSnow:
         self.statements.append((sql, params))
         for pattern, result in self.handlers:
             if pattern.search(sql):
+                if isinstance(result, Iterator):
+                    result = next(result)
                 if isinstance(result, BaseException):
                     raise result
                 if callable(result):

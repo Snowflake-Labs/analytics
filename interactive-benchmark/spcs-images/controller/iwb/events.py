@@ -10,6 +10,10 @@ from typing import Any, TextIO
 SCHEMA_VERSION = 1
 
 
+def now_iso() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
 class Events:
     def __init__(self, run_id: str, stream: TextIO | None = None) -> None:
         self.run_id = run_id
@@ -27,7 +31,7 @@ class Events:
             "schema_version": SCHEMA_VERSION,
             "run_id": self.run_id,
             "seq": self._seq,
-            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+            "ts": now_iso(),
             "step": step,
             "status": status,
             "detail": detail,

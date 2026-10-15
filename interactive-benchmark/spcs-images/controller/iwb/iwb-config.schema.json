@@ -112,8 +112,7 @@
           ],
           "properties": {
             "existing": {
-              "type": "string",
-              "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$",
+              "$ref": "#/$defs/warehouse_name",
               "description": "Interactive warehouse to benchmark. Never altered or dropped; if suspended, it is resumed for the run and suspended again afterwards. Interactive tables the workload reads must already be attached; unattached standard tables work but are not cached."
             }
           }
@@ -162,13 +161,11 @@
       ]
     },
     "fallback_warehouse": {
-      "type": "string",
-      "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$",
+      "$ref": "#/$defs/warehouse_name",
       "description": "Optional standard warehouse for statements that hit the 5 s interactive timeout, set on a created warehouse. Without it those statements fail and count against the failure gate. With warehouse.existing, that warehouse's own FALLBACK_WAREHOUSE is used and measured; a different value here is rejected."
     },
     "lookup_warehouse": {
-      "type": "string",
-      "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$",
+      "$ref": "#/$defs/warehouse_name",
       "description": "Standard warehouse used only to search SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY (365 days) for workload.query_ids older than job retention (14 days by default). Not needed otherwise; not allowed with workload.queries."
     },
     "concurrent_users": {
@@ -209,6 +206,10 @@
           "minLength": 1
         }
       }
+    },
+    "warehouse_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$"
     }
   }
 }

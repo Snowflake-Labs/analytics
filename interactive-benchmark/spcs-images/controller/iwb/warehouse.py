@@ -9,11 +9,10 @@ from dataclasses import dataclass, field
 from snowflake.connector.errors import ProgrammingError
 
 from iwb import budget
-from iwb.budget import STARTED_TIMEOUT_SECONDS
 from iwb.config import Config, ConfigError, Context
 from iwb.events import Events
 from iwb.snow import Snow
-from iwb.workload import Query, explain_plan, ident, qualified
+from iwb.workload import Query, explain_plan, ident, qualified, use_warehouse
 
 TABLE_NOT_BOUND = 10402  # 010402: Interactive table {0} needs to be added to current warehouse.
 NOT_BOUND_TABLE = re.compile(r"Interactive table (\S+) needs to be added")
@@ -128,7 +127,7 @@ def activate(cfg: Config, snow: Snow, wh: Warehouse) -> None:
     wait_started(snow, wh.name)
 
 
-def wait_started(snow: Snow, name: str, timeout: float = STARTED_TIMEOUT_SECONDS) -> None:
+def wait_started(snow: Snow, name: str, timeout: float = budget.STARTED_TIMEOUT_SECONDS) -> None:
     deadline = time.monotonic() + timeout
     state = None
     while time.monotonic() < deadline:
@@ -151,7 +150,7 @@ def _qualify(name: str, context: Context) -> str:
 
 def ensure_compiles(snow: Snow, wh: Warehouse, queries: list[Query], events: Events) -> None:
     """Compile each query on the interactive warehouse; attach any interactive table it names."""
-    snow.execute(f"USE WAREHOUSE {ident(wh.name)}")
+    use_warehouse(snow, wh.name)
     for q in queries:
         for _ in range(MAX_ATTACH_ROUNDS):
             try:

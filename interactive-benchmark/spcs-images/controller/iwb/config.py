@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,7 +11,8 @@ import jsonschema
 
 from iwb import budget
 
-SCHEMA_PATH = Path(__file__).with_name("iwb-config.schema.json")
+SCHEMA = json.loads(Path(__file__).with_name("iwb-config.schema.json").read_text())
+NAME_PATTERN = re.compile(SCHEMA["properties"]["name"]["pattern"])
 WEIGHT_TOLERANCE = 0.01
 
 
@@ -40,8 +42,8 @@ class QueryIdEntry:
 @dataclass(frozen=True)
 class NewWarehouse:
     size: str
-    min_cluster_count: int
-    max_cluster_count: int
+    min_cluster_count: int = 1
+    max_cluster_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -72,7 +74,7 @@ def _check_weights(weights: list[float], what: str) -> None:
 
 
 def parse(raw: dict) -> Config:
-    validator = jsonschema.Draft202012Validator(json.loads(SCHEMA_PATH.read_text()))
+    validator = jsonschema.Draft202012Validator(SCHEMA)
     errors = sorted(validator.iter_errors(raw), key=lambda e: list(e.absolute_path))
     if errors:
         details = "; ".join(f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message}" for e in errors)
@@ -105,10 +107,7 @@ def parse(raw: dict) -> Config:
     warehouse = raw["warehouse"]
     new_warehouse = None
     if "create" in warehouse:
-        create = warehouse["create"]
-        new_warehouse = NewWarehouse(
-            create["size"], create.get("min_cluster_count", 1), create.get("max_cluster_count", 1)
-        )
+        new_warehouse = NewWarehouse(**warehouse["create"])
         if new_warehouse.min_cluster_count > new_warehouse.max_cluster_count:
             raise ConfigError("warehouse.create: min_cluster_count must not exceed max_cluster_count")
 

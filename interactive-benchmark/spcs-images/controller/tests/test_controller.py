@@ -1,3 +1,4 @@
+import contextlib
 import io
 import json
 import os
@@ -11,9 +12,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from fakes import FakeSnow
 from snowflake.connector.errors import ProgrammingError
 
-from fakes import FakeSnow
 from iwb import budget, config, metrics, runner, warehouse, workload
 from iwb.config import ConfigError, Context
 from iwb.events import Events
@@ -258,22 +259,14 @@ class WarehouseTest(unittest.TestCase):
     def test_ensure_compiles_attaches_unbound_interactive_table(self) -> None:
         unbound = ProgrammingError(msg="Interactive table IT1 needs to be added to current warehouse. ...",
                                    errno=warehouse.TABLE_NOT_BOUND)
-        answers = iter([unbound, [{"PLAN": "{}"}]])
-
-        def explain(sql, params):
-            answer = next(answers)
-            if isinstance(answer, Exception):
-                raise answer
-            return answer
-
-        snow = (FakeSnow().on(r"EXPLAIN_PLAN_JSON", explain)
+        snow = (FakeSnow().on(r"EXPLAIN_PLAN_JSON", iter([unbound, [{"PLAN": "{}"}]]))
                 .on(r"SHOW WAREHOUSES", [{"NAME": "IWB_RUN_IW", "STATE": "STARTED"}]))
         queries = [workload.Query("q01", "select * from IT1", 100, Context("DB", "S"), "sql")]
         wh = warehouse.Warehouse("IWB_RUN_IW", created=True)
         warehouse.ensure_compiles(snow, wh, queries, quiet_events())
         self.assertEqual(["ALTER WAREHOUSE IWB_RUN_IW ADD TABLES (DB.S.IT1)"], snow.ran("ADD TABLES"))
 
-        answers = iter([unbound])
+        snow = FakeSnow().on(r"EXPLAIN_PLAN_JSON", unbound)
         with self.assertRaisesRegex(ConfigError, "is not attached to IW"):
             warehouse.ensure_compiles(snow, warehouse.Warehouse("IW", created=False), queries, quiet_events())
 
@@ -284,25 +277,32 @@ class WarehouseTest(unittest.TestCase):
         self.assertEqual(["DROP WAREHOUSE IF EXISTS IWB_RUN_IW"], snow.ran("DROP"))
 
 
+def run_cli(failing_step=None, error=None, snow=None, results_root=None, **overrides):
+    """cli.run on a config that creates its warehouse, with `failing_step` patched to `error`.
+
+    Returns the exit code, the fake, result.json and the events.
+    """
+    cfg_path = Path(tempfile.mkdtemp()) / "run.json"
+    cfg_path.write_text(json.dumps(base(**{"warehouse": {"create": {"size": "XSMALL"}}, **overrides})))
+    snow = ((snow or FakeSnow()).on(r"EXPLAIN_PLAN_JSON", [{"PLAN": "{}"}])
+            .on(r"SHOW WAREHOUSES LIKE", lambda sql, params: [
+                {"NAME": params[0], "TYPE": "INTERACTIVE", "STATE": "STARTED"}]
+                if params[0].endswith("_IW") else []))
+    results = results_root or tempfile.mkdtemp()
+    out = io.StringIO()
+    failing = patch(f"iwb.{failing_step}", side_effect=error) if failing_step else contextlib.nullcontext()
+    with patch("iwb.cli.connect", return_value=snow), failing, patch("sys.stdout", out):
+        from iwb import cli
+        code = cli.run(str(cfg_path), results, "conn")
+    result = json.loads(next(Path(results).glob("*/result.json")).read_text())
+    return code, snow, result, [json.loads(line) for line in out.getvalue().splitlines()]
+
+
 class CliTeardownTest(unittest.TestCase):
     """A created warehouse is dropped whatever fails after CREATE, and result.json is written."""
 
-    def run_cli(self, failing_step: str | None, error: BaseException | None, snow: FakeSnow | None = None,
-                **overrides) -> tuple[int, FakeSnow, dict]:
-        cfg_path = Path(tempfile.mkdtemp()) / "run.json"
-        cfg_path.write_text(json.dumps(base(**{"warehouse": {"create": {"size": "XSMALL"}}, **overrides})))
-        snow = ((snow or FakeSnow()).on(r"EXPLAIN_PLAN_JSON", [{"PLAN": "{}"}])
-                .on(r"SHOW WAREHOUSES LIKE", lambda sql, params: [
-                    {"NAME": params[0], "TYPE": "INTERACTIVE", "STATE": "STARTED"}]
-                    if params[0].endswith("_IW") else []))
-        results = tempfile.mkdtemp()
-        out = io.StringIO()
-        failing = patch(f"iwb.{failing_step}", side_effect=error) if failing_step else patch("iwb.cli.EXIT_OK", 0)
-        with patch("iwb.cli.connect", return_value=snow), failing, patch("sys.stdout", out):
-            from iwb import cli
-            code = cli.run(str(cfg_path), results, "conn")
-        result = json.loads(next(Path(results).glob("*/result.json")).read_text())
-        self.events = [json.loads(line) for line in out.getvalue().splitlines()]
+    def run_cli(self, *args, **kwargs) -> tuple[int, FakeSnow, dict]:
+        code, snow, result, self.events = run_cli(*args, **kwargs)
         return code, snow, result
 
     def assert_final_event(self, exit_code: int) -> None:
@@ -363,14 +363,7 @@ class CliTeardownTest(unittest.TestCase):
             seen.append(results_dir)
             raise SystemExit(143)
 
-        cfg_path = Path(tempfile.mkdtemp()) / "run.json"
-        cfg_path.write_text(json.dumps(base()))
-        snow = (FakeSnow().on(r"EXPLAIN_PLAN_JSON", [{"PLAN": "{}"}])
-                .on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "INTERACTIVE", "STATE": "STARTED"}]))
-        with patch("iwb.cli.connect", return_value=snow), patch("iwb.runner.run_load", side_effect=run_load), \
-                patch("sys.stdout", io.StringIO()):
-            from iwb import cli
-            cli.run(str(cfg_path), "relative-results", "conn")
+        self.run_cli("runner.run_load", run_load, results_root="relative-results")
         self.assertTrue(seen[0].is_absolute())
 
     def test_first_stop_ignores_later_ones(self) -> None:
