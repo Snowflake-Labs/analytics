@@ -17,7 +17,7 @@ class FakeSnow:
         self.statements.append((sql, params))
         for pattern, result in self.handlers:
             if pattern.search(sql):
-                if isinstance(result, Exception):
+                if isinstance(result, BaseException):
                     raise result
                 if callable(result):
                     return result(sql, params)

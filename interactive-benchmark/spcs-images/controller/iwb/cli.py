@@ -45,7 +45,8 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
     run_id = _run_id(raw_name)
-    results_dir = Path(results_root) / run_id
+    # Absolute: the API server, which reads workload.json from here, runs in another directory.
+    results_dir = Path(results_root).resolve() / run_id
     events = Events(run_id)
     result: dict = {"schema_version": RESULT_SCHEMA_VERSION, "run_id": run_id,
                     "started_at": datetime.now(UTC).isoformat(timespec="seconds")}
@@ -66,7 +67,8 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         events.emit("VALIDATE", "completed", queries=len(queries), tables=sorted(tables))
 
         events.emit("SETUP_WAREHOUSE", "started")
-        wh = warehouse.prepare(cfg, snow, tables, run_id, events)
+        wh = warehouse.planned(cfg, run_id)
+        warehouse.prepare(cfg, snow, tables, wh, run_id, events)
         warehouse.activate(cfg, snow, wh)
         warehouse.ensure_compiles(snow, wh, queries, events)
         events.emit("SETUP_WAREHOUSE", "completed", warehouse=wh.name, created=wh.created,
@@ -95,7 +97,7 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         exit_code = {"PASS": EXIT_OK, "BENCHMARK_FAIL": EXIT_VERDICT_FAIL}.get(load.outcome, EXIT_INFRA)
     except ConfigError as exc:
         result["error"] = str(exc)
-        events.emit("VALIDATE", "failed", error=str(exc))
+        events.emit(events.step, "failed", error=str(exc))
         exit_code = EXIT_INVALID
     except SystemExit as exc:
         result["error"] = f"terminated (exit {exc.code})"
@@ -106,10 +108,13 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         events.emit("RUN", "failed", error=result["error"], traceback=traceback.format_exc())
         exit_code = EXIT_CRASH
     finally:
+        # A second stop request must not interrupt teardown or the result.
+        handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGTERM, signal.SIGINT)}
         if snow is not None and wh is not None:
             try:
                 warehouse.teardown(snow, wh, events)
             except Exception as exc:  # noqa: BLE001
+                result["teardown_error"] = f"{wh.name}: {exc}"
                 events.emit("TEARDOWN", "failed", warehouse=wh.name, error=str(exc))
                 exit_code = exit_code or EXIT_CRASH
         if wh is not None:
@@ -125,6 +130,8 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         (results_dir / "result.json").write_text(json.dumps(result, indent=2, default=str))
         events.emit("RUN", "completed" if exit_code == EXIT_OK else "failed", exit_code=exit_code,
                     result=str(results_dir / "result.json"))
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
     return exit_code
 
 

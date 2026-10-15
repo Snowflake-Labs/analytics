@@ -26,6 +26,7 @@ from iwb.workload import Query, ident, use_context
 
 WARMUP_ROUNDS = 3
 STOP_GRACE_SECONDS = 30
+API_POLL_SECONDS = 2
 # Settings the controller owns; a stray value in the host environment must not change the gates.
 CONTROLLED_ENV_PREFIXES = ("BASELINE_", "BENCHMARK_MAX_", "POOL_", "LOCUST_", "API_READY_")
 LOCUST_EXIT = {0: "PASS", 1: "API_NOT_READY", 2: "BASELINE_FAIL", 3: "BENCHMARK_FAIL"}
@@ -193,10 +194,13 @@ def run_load(
                 ["bash", locust_entrypoint], env=locust_env, start_new_session=True,
                 stdout=locust_log, stderr=subprocess.STDOUT,
             )
-            try:
-                rc = locust.wait(timeout=locust_timeout)
-            except subprocess.TimeoutExpired as exc:
-                raise RuntimeError(f"Locust did not finish within {locust_timeout}s") from exc
+            deadline = time.monotonic() + locust_timeout
+            while (rc := locust.poll()) is None:
+                if api.poll() is not None:
+                    raise RuntimeError(f"The API server exited ({api.returncode}) during the load test; see api.log")
+                if time.monotonic() > deadline:
+                    raise RuntimeError(f"Locust did not finish within {locust_timeout}s")
+                time.sleep(API_POLL_SECONDS)
         finally:
             if locust is not None:
                 _stop(locust)
