@@ -177,6 +177,38 @@
       "type": "number",
       "exclusiveMinimum": 0,
       "maximum": 240
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "warehouse"
+      ],
+      "properties": {
+        "warehouse": {
+          "$ref": "#/$defs/warehouse_name",
+          "description": "Standard warehouse for the two report writes: an interactive warehouse cannot call procedures."
+        },
+        "benchmark_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "Defaults to the run id. Reusing an id replaces that benchmark, if you created it."
+        },
+        "parent_benchmark_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "The benchmark this run repeats."
+        },
+        "description": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "object"
+        }
+      },
+      "description": "Write the run to SNOWFLAKE.INTERACTIVE_ANALYTICS (the BENCHMARK_* views) with WRITE_BENCHMARK_REPORT: RUNNING once the workload is resolved, then the final state. Needs USAGE on the procedure, which SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE has."
     }
   },
   "$defs": {

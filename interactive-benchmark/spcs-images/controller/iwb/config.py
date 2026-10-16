@@ -47,7 +47,17 @@ class NewWarehouse:
 
 
 @dataclass(frozen=True)
+class Report:
+    warehouse: str
+    benchmark_id: str | None = None
+    parent_benchmark_id: str | None = None
+    description: str | None = None
+    tags: dict | None = None
+
+
+@dataclass(frozen=True)
 class Config:
+    name: str | None
     context: Context
     sql_entries: tuple[SqlEntry, ...]
     query_id_entries: tuple[QueryIdEntry, ...]
@@ -57,6 +67,7 @@ class Config:
     lookup_warehouse: str | None
     concurrent_users: int
     run_minutes: float
+    report: Report | None
 
     @property
     def run_seconds(self) -> int:
@@ -112,6 +123,7 @@ def parse(raw: dict) -> Config:
             raise ConfigError("warehouse.create: min_cluster_count must not exceed max_cluster_count")
 
     return Config(
+        name=raw.get("name"),
         context=context,
         sql_entries=tuple(sql_entries),
         query_id_entries=tuple(query_id_entries),
@@ -121,6 +133,7 @@ def parse(raw: dict) -> Config:
         lookup_warehouse=raw.get("lookup_warehouse"),
         concurrent_users=raw["concurrent_users"],
         run_minutes=float(raw["run_minutes"]),
+        report=Report(**raw["report"]) if "report" in raw else None,
     )
 
 

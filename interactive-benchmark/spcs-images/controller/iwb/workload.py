@@ -32,7 +32,11 @@ class Query:
     sql: str
     weight: float
     context: Context
-    source: str
+    source: str  # "sql", or the query ID it was read from
+
+    @property
+    def from_history(self) -> bool:
+        return self.source != "sql"
 
 
 def _monitored(snow: Snow, path: str) -> list[dict]:
