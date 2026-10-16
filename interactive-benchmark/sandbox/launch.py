@@ -1,17 +1,13 @@
 """Run one interactive benchmark in a Cortex Sandbox and print its events.
 
-Reference client for the sandbox host (the Snowsight integration does the same calls):
-create a sandbox as the given role, start the controller detached, relay its
-`{"iwb": "event", ...}` lines until the final RUN event, then print result.json.
+Reference client for a host that drives a sandbox through exec calls: create it as the
+given role, start the controller detached, relay its `{"iwb": "event", ...}` lines until the
+final RUN event, then print result.json.
 
 With --image, the sandbox runs that benchmark image: only the config is uploaded, and the
 image's controller/run.sh runs it. Without it, the sandbox runs the default image: the API,
 Locust and controller sources from this checkout are uploaded with bootstrap.sh, which
 installs them from pypi.org first and then runs the same run.sh.
-
-The SDK's `code=`/`command=` path is not used: in snowflake-sandbox-python 0.2.2a4 it drops
-`role` and `idle_suspend`, runs the command before the bundle is extracted, and keeps the
-sandbox up after the command exits, so `poll()` never reports completion.
 
 Requires: pip install "snowflake-sandbox-python==0.2.2a4"   (Cortex Sandboxes, private preview)
 See README.md in this directory.
@@ -54,7 +50,7 @@ STOP_FILE = f"{WORK_DIR}/stop"
 RESULTS_MOUNT = "/iwb/results"
 POLL_SECONDS = 15
 MAX_POLL_FAILURES = 5
-# Dependency install before the controller starts.
+# Dependency install before the controller starts, without --image.
 INSTALL_SECONDS = 600
 # SIGTERM to the controller runs its teardown: stop Locust and the API, drop a created warehouse.
 STOP_GRACE = timedelta(minutes=5)
@@ -88,11 +84,11 @@ def zip_bundle(bundle: Path) -> bytes:
     return buf.getvalue()
 
 
-def run_budget(config: dict) -> timedelta:
+def run_budget(config: dict, install: bool) -> timedelta:
     """Longer than the controller's worst case, so it times out and cleans up first; whole minutes
     (the sandbox's idle_suspend resolution)."""
     run_secs = budget.run_seconds(float(config["run_minutes"]))
-    seconds = budget.worst_case_seconds(run_secs, int(config["concurrent_users"])) + INSTALL_SECONDS
+    seconds = budget.worst_case_seconds(run_secs, int(config["concurrent_users"])) + install * INSTALL_SECONDS
     return timedelta(minutes=math.ceil(seconds / 60))
 
 
@@ -227,7 +223,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, _terminate)
     config_bytes = args.config.read_bytes()
     config = json.loads(config_bytes)
-    run_time = run_budget(config)
+    run_time = run_budget(config, install=not args.image)
     results_stage = args.results_stage.lstrip("@") if args.results_stage else None
     env = {"IWB_RESULTS_COPY_DIR": RESULTS_MOUNT} if results_stage else {}
     mounts = ([StageMount.from_stage(results_stage, mount_path=RESULTS_MOUNT, readonly=False)]

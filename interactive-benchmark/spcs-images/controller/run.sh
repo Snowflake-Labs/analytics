@@ -7,7 +7,7 @@
 # In the benchmark image the defaults below already point at the installed environments;
 # sandbox/bootstrap.sh overrides them after installing from source.
 #
-# Env: IWB_CONNECTION (default "default"),
+# Env: IWB_CONNECTION (read by the controller; default "default"),
 #      IWB_RESULTS_COPY_DIR (optional, e.g. a stage mount; results are copied there at the end),
 #      IWB_WORK_DIR (default /var/tmp/iwb; results are written to $IWB_WORK_DIR/results).
 #
@@ -25,24 +25,17 @@ CONTROLLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 WORK_DIR="${IWB_WORK_DIR:-/var/tmp/iwb}"
 CONTROLLER_PYTHON="${IWB_CONTROLLER_PYTHON:-/opt/venvs/controller/bin/python}"
-CONNECTION="${IWB_CONNECTION:-default}"
 
 mkdir -p "$WORK_DIR"
 
 cd "$CONTROLLER_DIR"
-# A stop before the controller installs its signal handlers would kill it without a result.
-if [[ -e "$WORK_DIR/stop" ]]; then
-  echo '{"iwb":"bootstrap","status":"stopped_before_start"}'
-  exit 143
-fi
 rc=0
 # Backgrounded so its PID can be recorded: the launcher SIGTERMs it to trigger teardown.
-"$CONTROLLER_PYTHON" -m iwb run \
-  --config "$CONFIG" \
-  --results-dir "$WORK_DIR/results" \
-  --connection "$CONNECTION" < /dev/null &
+"$CONTROLLER_PYTHON" -m iwb run --config "$CONFIG" --results-dir "$WORK_DIR/results" < /dev/null &
 pid=$!
 echo "$pid" > "$WORK_DIR/controller.pid"
+# The launcher creates the stop file before reading controller.pid, so a stop that came before
+# the PID was written is caught here.
 if [[ -e "$WORK_DIR/stop" ]]; then
   kill -TERM "$pid" 2>/dev/null || true
 fi

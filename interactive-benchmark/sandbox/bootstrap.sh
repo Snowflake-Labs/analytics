@@ -16,7 +16,6 @@ if [[ $# -ne 1 ]]; then
 fi
 
 CODE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 UV_VERSION=0.12.17
 WORK_DIR="${IWB_WORK_DIR:-/var/tmp/iwb}"
 
@@ -52,4 +51,4 @@ export BENCHMARK_LOCUST_FILE="$CODE_DIR/locust/locustfile.py"
 export BENCHMARK_HTTP_PYTHON="$WORK_DIR/venvs/locust/bin/python"
 export IWB_WORK_DIR="$WORK_DIR"
 
-exec bash "$CODE_DIR/controller/run.sh" "$CONFIG"
+exec bash "$CODE_DIR/controller/run.sh" "$1"

@@ -15,7 +15,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # SIGTERM arrives while it sleeps STUB_SLEEP seconds.
 cat >"$TMP_DIR/python" <<'STUB'
 #!/usr/bin/env bash
-results="${@: -3:1}"
+results="${@: -1}"
 echo "args=$*" >"$STUB_OUT"
 mkdir -p "$results/RUN_1" && echo '{}' >"$results/RUN_1/result.json"
 trap 'exit 143' TERM
@@ -33,9 +33,9 @@ run() {
     STUB_OUT="$TMP_DIR/stub.out" "$@" bash "$RUN" "$TMP_DIR/config.json"
 }
 
-# 1. Runs the controller on the config with local results and the default connection; records its PID.
+# 1. Runs the controller on the config with local results; records its PID.
 run args || fail "run failed"
-grep -qx -- "args=-m iwb run --config $TMP_DIR/config.json --results-dir $TMP_DIR/work-args/results --connection default" \
+grep -qx -- "args=-m iwb run --config $TMP_DIR/config.json --results-dir $TMP_DIR/work-args/results" \
   "$TMP_DIR/stub.out" || fail "controller args wrong: $(cat "$TMP_DIR/stub.out")"
 [[ -s "$TMP_DIR/work-args/controller.pid" ]] || fail "controller.pid not written"
 
@@ -53,12 +53,14 @@ run badcopy IWB_RESULTS_COPY_DIR="$TMP_DIR/not-a-dir" >"$TMP_DIR/out" 2>/dev/nul
 (( rc == 1 )) || fail "failed copy exited $rc, want 1"
 grep -q results_copy_failed "$TMP_DIR/out" || fail "copy failure not reported"
 
-# 4. A stop before the controller starts: it is never started.
+# 4. A stop that came before the PID was written (the launcher had nothing to signal):
+#    run.sh signals the controller itself.
 mkdir -p "$TMP_DIR/work-early" && touch "$TMP_DIR/work-early/stop"
 rc=0
-run early >/dev/null || rc=$?
+started=$SECONDS
+run early STUB_SLEEP=30 >/dev/null || rc=$?
 (( rc == 143 )) || fail "early stop exited $rc, want 143"
-[[ ! -s "$TMP_DIR/stub.out" ]] || fail "controller started after an early stop"
+(( SECONDS - started < 20 )) || fail "early stop did not end the controller"
 
 # 5. A stop while the controller runs: SIGTERM to the recorded PID ends it with 143.
 rc=0

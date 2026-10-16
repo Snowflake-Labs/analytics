@@ -38,6 +38,9 @@ class FakeSandbox:
             raise SandboxError("transient")
         return self.files[path]
 
+    def write_bytes(self, path, data):
+        self.files[path] = data
+
     def exec(self, cmd):
         self.commands.append(cmd[-1])
         if "kill -TERM" in cmd[-1]:
@@ -57,7 +60,6 @@ def finished(rc, exit_code):
 class LaunchTest(unittest.TestCase):
     def test_image_mode_uploads_only_the_config_and_runs_the_entrypoint(self) -> None:
         sandbox = FakeSandbox({})
-        sandbox.write_bytes = lambda path, data: sandbox.files.__setitem__(path, data)
         launch.start(sandbox, b'{"run_minutes": 1}', None)
         self.assertEqual({launch.CONFIG: b'{"run_minutes": 1}'}, sandbox.files)
         self.assertIn(f"bash -c 'bash {launch.IMAGE_RUN} {launch.CONFIG}; echo $? > {launch.RUN_RC}'",
@@ -65,7 +67,6 @@ class LaunchTest(unittest.TestCase):
 
     def test_bundle_mode_runs_bootstrap_from_the_unpacked_bundle(self) -> None:
         sandbox = FakeSandbox({})
-        sandbox.write_bytes = lambda path, data: sandbox.files.__setitem__(path, data)
         with mock.patch.object(launch, "zip_bundle", return_value=b"zip"):
             launch.start(sandbox, b"{}", Path("/bundle"))
         self.assertEqual(b"zip", sandbox.files[f"{launch.WORK_DIR}/bundle.zip"])
@@ -82,6 +83,8 @@ class LaunchTest(unittest.TestCase):
             self.assertTrue((bundle / path).is_file(), path)
         self.assertFalse(any(p.name == ".venv" for p in bundle.rglob("*")))
         self.assertFalse((bundle / "controller" / "tests").exists())
+        names = zipfile.ZipFile(io.BytesIO(launch.zip_bundle(bundle))).namelist()
+        self.assertIn("controller/iwb/cli.py", names)
 
     def test_locks_resolve_from_public_pypi(self) -> None:
         # The sandbox reaches only public indexes; a lock generated behind a mirror fails to install.
@@ -89,14 +92,6 @@ class LaunchTest(unittest.TestCase):
             lock = (launch.IMAGE_SOURCES / project / "uv.lock").read_text()
             registries = set(re.findall(r'registry = "([^"]+)"', lock))
             self.assertEqual({"https://pypi.org/simple"}, registries, project)
-
-    def test_zip_round_trips_bundle(self) -> None:
-        config = Path(tempfile.mkdtemp()) / "run.json"
-        config.write_text('{"run_minutes": 1}')
-        bundle = launch.build_bundle(config)
-        names = zipfile.ZipFile(io.BytesIO(launch.zip_bundle(bundle))).namelist()
-        self.assertIn("bootstrap.sh", names)
-        self.assertIn("controller/iwb/cli.py", names)
 
     def test_relay_prints_only_new_events_and_finds_final(self) -> None:
         logs = "\n".join([
@@ -155,9 +150,12 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(1, sum("kill -TERM" in c for c in sandbox.commands))
 
     def test_budget_is_whole_minutes_above_the_controller_worst_case(self) -> None:
-        run_time = launch.run_budget({"run_minutes": 1.5, "concurrent_users": 10})
-        self.assertEqual(0, run_time.total_seconds() % 60)
-        self.assertGreater(run_time.total_seconds(), launch.budget.worst_case_seconds(90, 10))
+        config = {"run_minutes": 1.5, "concurrent_users": 10}
+        for install in (True, False):
+            run_time = launch.run_budget(config, install)
+            self.assertEqual(0, run_time.total_seconds() % 60)
+            self.assertGreater(run_time.total_seconds(), launch.budget.worst_case_seconds(90, 10))
+        self.assertGreater(launch.run_budget(config, True), launch.run_budget(config, False))
 
     def test_memory_tier_by_users(self) -> None:
         self.assertEqual(["4g", "16g", "32g"], [launch.memory_tier(u) for u in (50, 200, 500)])
