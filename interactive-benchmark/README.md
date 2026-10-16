@@ -103,7 +103,7 @@ The benchmark runs on [Snowpark Container Services](https://docs.snowflake.com/e
 ### Approved Container Image
 
 Both services use
-`SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES/interactive-analytics/interactive-benchmark:0.2.0`;
+`SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES/interactive-analytics/interactive-benchmark:0.3.0`;
 `BENCHMARK_ROLE=api|locust` selects the runtime. Benchmark users do not build
 images or need `CREATE IMAGE REPOSITORY`.
 
