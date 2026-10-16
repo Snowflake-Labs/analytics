@@ -93,7 +93,7 @@ def prepare(cfg: Config, snow: Snow, tables: set[str], wh: Warehouse, run_id: st
     assert new is not None
     cleanup_stale(snow, events)
     # Later runs drop it as stale only after this run's worst case, plus an hour.
-    expires = int(time.time()) + budget.worst_case_seconds(cfg.run_seconds, cfg.concurrent_users) + 3600
+    expires = int(time.time()) + cfg.worst_case_seconds + 3600
     tables_clause = f"TABLES ({', '.join(sorted(tables))}) " if tables else ""
     try:
         snow.execute(

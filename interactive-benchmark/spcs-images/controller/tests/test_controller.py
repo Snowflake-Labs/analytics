@@ -66,6 +66,20 @@ class ConfigTest(unittest.TestCase):
             with self.subTest(message), self.assertRaisesRegex(ConfigError, message):
                 config.parse(raw)
 
+    def test_up_to_1000_query_ids(self) -> None:
+        ids = [f"01c793a5-0100-0001-0000-{i:012x}" for i in range(1001)]
+        self.assertEqual(1000, len(config.parse(base(workload={"query_ids": ids[:1000]})).query_id_entries))
+        with self.assertRaises(ConfigError) as raised:
+            config.parse(base(workload={"query_ids": ids}))
+        self.assertEqual("Invalid config: workload/query_ids: fails maxItems 1000", str(raised.exception))
+        with self.assertRaisesRegex(ConfigError, "^Invalid config: workload/query_ids/0: 'x' does not match"):
+            config.parse(base(workload={"query_ids": ["x"]}))
+
+    def test_worst_case_grows_with_the_workload(self) -> None:
+        small = config.parse(base(workload={"query_ids": [QID1]}))
+        large = config.parse(base(workload={"query_ids": [f"01c793a5-0100-0001-0000-{i:012x}" for i in range(1000)]}))
+        self.assertEqual(999 * budget.SECONDS_PER_QUERY, large.worst_case_seconds - small.worst_case_seconds)
+
     def test_schema_requires_context(self) -> None:
         raw = base()
         del raw["context"]
@@ -171,7 +185,7 @@ class WarehouseTest(unittest.TestCase):
         self.assertIn("IWB_RUN_IW TABLES (DB.S.T1, DB.S.T2)", create)
         self.assertIn("WAREHOUSE_SIZE = 'SMALL' MIN_CLUSTER_COUNT = 1 MAX_CLUSTER_COUNT = 3", create)
         expires = int(re.search(r"COMMENT = 'iwb:RUN:expires=(\d+)'", create).group(1))
-        self.assertGreater(expires, time.time() + budget.worst_case_seconds(cfg.run_seconds, cfg.concurrent_users))
+        self.assertGreater(expires, time.time() + cfg.worst_case_seconds)
         self.assertEqual(["ALTER WAREHOUSE IWB_RUN_IW SET FALLBACK_WAREHOUSE = STD"], snow.ran("FALLBACK"))
         self.assertTrue(wh.created)
         self.assertEqual("STD", wh.fallback)
