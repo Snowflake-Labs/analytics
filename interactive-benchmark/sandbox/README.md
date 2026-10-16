@@ -51,7 +51,8 @@ behaviour (see [How it works](#how-it-works)).
 
 - `workload`: either `queries` (SQL texts with `weight_pct` summing to 100; each may override
   `context`) or `query_ids` (IDs from query history: plain strings for equal weights, or
-  `{"query_id": ..., "weight_pct": ...}` for every ID, summing to 100).
+  `{"query_id": ..., "weight_pct": ...}` for every ID, summing to 100). Up to 100 `queries` or
+  1000 `query_ids`; setup grows with the count (see [Timing and sizing](#timing-and-sizing)).
 - `warehouse`: `create` (dropped when the run ends) or `{"existing": "MY_IW"}` (never altered
   or dropped; if it was suspended, it is resumed for the run and suspended again afterwards).
 - `fallback_warehouse` (optional): a standard warehouse that re-runs statements hitting the
@@ -192,8 +193,10 @@ standard warehouse for `report.warehouse`, and permission to create sandboxes. I
   Verified up to 200 users on 16g (baseline p99 2 ms at 200 req/s); the baseline gate fails
   (exit 40) if the sandbox cannot keep up.
 - The launcher's deadline is the controller's worst case (`spcs-images/controller/iwb/budget.py`:
-  two 15-minute warehouse waits, the Locust timeout, setup and teardown) plus 10 minutes for the
-  install, so the controller normally times out and cleans up first. `idle_suspend` is that plus 5
+  two 15-minute warehouse waits, the Locust timeout, setup and teardown, and 20 s per workload
+  query) plus 10 minutes for the install, so the controller normally times out and cleans up
+  first. Each query is warmed three times, so with hundreds of queries most of the run's setup
+  is warm-up. `idle_suspend` is that plus 5
   minutes.
 - If the launcher is stopped or hits its deadline, it sends SIGTERM to the controller and waits
   up to 5 minutes for teardown (which drops a created warehouse) before terminating the sandbox.

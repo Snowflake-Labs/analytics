@@ -150,12 +150,15 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(1, sum("kill -TERM" in c for c in sandbox.commands))
 
     def test_budget_is_whole_minutes_above_the_controller_worst_case(self) -> None:
-        config = {"run_minutes": 1.5, "concurrent_users": 10}
+        config = {"run_minutes": 1.5, "concurrent_users": 10, "workload": {"query_ids": ["a", "b"]}}
         for install in (True, False):
             run_time = launch.run_budget(config, install)
             self.assertEqual(0, run_time.total_seconds() % 60)
-            self.assertGreater(run_time.total_seconds(), launch.budget.worst_case_seconds(90, 10))
+            self.assertGreater(run_time.total_seconds(), launch.budget.worst_case_seconds(90, 10, 2))
         self.assertGreater(launch.run_budget(config, True), launch.run_budget(config, False))
+        many = {**config, "workload": {"query_ids": ["a"] * 1000}}
+        self.assertGreaterEqual((launch.run_budget(many, False) - launch.run_budget(config, False)).total_seconds(),
+                                998 * launch.budget.SECONDS_PER_QUERY - 60)
 
     def test_memory_tier_by_users(self) -> None:
         self.assertEqual(["4g", "16g", "32g"], [launch.memory_tier(u) for u in (50, 200, 500)])
