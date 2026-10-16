@@ -175,7 +175,7 @@ Then present the SPCS resources that will be created and the shared images that 
 | Locust service                        | BENCHMARK_LOCUST                             |
 | Queries stage                         | @IWB_202609101430_DB.SPCS.BENCHMARK_QUERIES  |
 | Image repository (shared)             | SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES            |
-| Benchmark image                       | interactive-analytics/interactive-benchmark:0.2.0 |
+| Benchmark image                       | interactive-analytics/interactive-benchmark:0.3.0 |
 | API image role                        | `BENCHMARK_ROLE=api`                         |
 | Locust image role                     | `BENCHMARK_ROLE=locust`                      |
 
