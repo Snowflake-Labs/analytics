@@ -110,7 +110,7 @@ which `GET` downloads as a `.part#...` file; ignore it.
 | 20 | Benchmark verdict FAIL (no queries ran, or failures above 1%); numbers are not valid |
 | 30 | Invalid config, or missing access (the event says what) |
 | 40 | Infrastructure (API not ready or exited during the load, baseline gate failed) |
-| 1 | Unexpected error (see the `RUN failed` event), a failed results copy (`results_copy_failed`), or a launcher error |
+| 1 | Unexpected error (the `failed` event of the step it stopped, and `error` in `result.json`), a failed results copy (`results_copy_failed`), or a launcher error |
 | 64, 65 | `bootstrap.sh` or `run.sh` usage error, or an incomplete bundle |
 | 143, 130 | Launcher stopped by SIGTERM or SIGINT; the controller tore down first (a deadline exits 1 after the same teardown) |
 
@@ -188,8 +188,8 @@ host such as Snowsight. Use image `/snowflake/images/snowflake_images/interactiv
 `/app/controller/run.sh /var/tmp/iwb/config.json` detached with its output in
 `/var/tmp/iwb/run.log` and its exit code in `/var/tmp/iwb/run.rc`, and polls both. To cancel,
 it creates `/var/tmp/iwb/stop` and sends SIGTERM to the PID in `/var/tmp/iwb/controller.pid`.
-`run.sh` checks the stop file before and after starting the controller, so a cancel that
-arrives before the controller has started still takes effect. With `--results-stage`, `run.sh`
+`run.sh` checks the stop file once it has written the PID, so a cancel that arrives before
+the controller has started still takes effect. With `--results-stage`, `run.sh`
 copies the results to the stage mount (`IWB_RESULTS_COPY_DIR`) at the end.
 
 ## How it works
