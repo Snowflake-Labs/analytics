@@ -467,7 +467,7 @@ class MetricsTest(unittest.TestCase):
                    {**row("x", "IW", 1), "QUERY_TAG": "OTHER"}, row("ramp", "IW", 9000, end=0.3)],
             "STD": [row("c", "STD", 7000, end=2)],
         }[params[0]] if params[1] == 0 else [])
-        m = metrics.server_side(snow, "DB", "IW", "STD", "RUN", 0.6, 30)
+        m = metrics.summarize(metrics.statements(snow, "DB", "IW", "STD", "RUN", 0.6, 30), "IW")
         self.assertEqual((3, 0, 1), (m["n"], m["n_failed"], m["n_fallback"]))
         self.assertEqual(7000, m["p99_ms"])
         self.assertEqual(200, m["p95_interactive_only_ms"])
@@ -477,7 +477,7 @@ class MetricsTest(unittest.TestCase):
                "END_TIME": datetime.fromtimestamp(1, UTC), "TOTAL_ELAPSED_TIME": 5500, "COMPILATION_TIME": 1,
                "EXECUTION_TIME": 1, "QUEUED_MS": 2000, "QUERY_TAG": "RUN"}
         snow = FakeSnow().on(r"QUERY_HISTORY_BY_WAREHOUSE", lambda sql, params: [row] if params[1] == 0 else [])
-        m = metrics.server_side(snow, "DB", "IW", None, "RUN", 0, 30)
+        m = metrics.summarize(metrics.statements(snow, "DB", "IW", None, "RUN", 0, 30), "IW")
         self.assertEqual((1, 0), (m["n"], m["n_fallback"]))
 
     def test_full_slices_are_split_and_one_second_overflow_fails(self) -> None:
@@ -490,14 +490,14 @@ class MetricsTest(unittest.TestCase):
             return [{"QUERY_ID": f"{start}", "QUERY_TAG": "RUN"}]
 
         snow = FakeSnow().on("QUERY_HISTORY", history)
-        rows = metrics._collect(snow, "DB", "IW", "RUN", 0, 120)
+        rows = metrics._collect(snow, "DB", "IW", "RUN", 0, 120, False)
         self.assertEqual(8, len(rows))
         # 60 s and 30 s come back full; the remaining window is read in 15 s slices directly.
         self.assertEqual(10, len(snow.ran("QUERY_HISTORY")))
 
         always_full = FakeSnow().on("QUERY_HISTORY", lambda sql, params: [{}] * limit)
         with self.assertRaisesRegex(RuntimeError, "within one second"):
-            metrics._collect(always_full, "DB", "IW", "RUN", 0, 4)
+            metrics._collect(always_full, "DB", "IW", "RUN", 0, 4, False)
 
     def test_timed_out_slices_are_split_and_one_second_timeout_raises(self) -> None:
         def history(sql, params):
@@ -506,15 +506,15 @@ class MetricsTest(unittest.TestCase):
                 raise ProgrammingError(msg="Statement reached its statement or warehouse timeout", errno=630)
             return [{"QUERY_ID": f"{start}", "QUERY_TAG": "RUN"}]
 
-        rows = metrics._collect(FakeSnow().on("QUERY_HISTORY", history), "DB", "IW", "RUN", 0, 60)
+        rows = metrics._collect(FakeSnow().on("QUERY_HISTORY", history), "DB", "IW", "RUN", 0, 60, False)
         self.assertEqual(4, len(rows))
 
         timeout = ProgrammingError(msg="timeout", errno=630)
         with self.assertRaisesRegex(RuntimeError, "statement timeout"):
-            metrics._collect(FakeSnow().on("QUERY_HISTORY", timeout), "DB", "IW", "RUN", 0, 4)
+            metrics._collect(FakeSnow().on("QUERY_HISTORY", timeout), "DB", "IW", "RUN", 0, 4, False)
         with self.assertRaises(ProgrammingError):
             metrics._collect(FakeSnow().on("QUERY_HISTORY", ProgrammingError(msg="denied", errno=3001)),
-                             "DB", "IW", "RUN", 0, 60)
+                             "DB", "IW", "RUN", 0, 60, False)
 
     def test_percentile_nearest_rank(self) -> None:
         self.assertEqual(95, metrics.percentile(list(range(1, 101)), 95))

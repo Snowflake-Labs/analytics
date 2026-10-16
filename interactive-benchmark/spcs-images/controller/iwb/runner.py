@@ -43,15 +43,17 @@ class LoadResult:
     window: tuple[float, float] | None
 
 
-def warm(snow: Snow, wh: Warehouse, queries: list[Query], events: Events) -> None:
+def warm(snow: Snow, wh: Warehouse, queries: list[Query], events: Events) -> dict[str, str]:
+    """Run each query WARMUP_ROUNDS times; returns Snowflake query id -> workload query id."""
     use_warehouse(snow, wh.name)
+    ran: dict[str, str] = {}
     for round_no in range(1, WARMUP_ROUNDS + 1):
         slowest_ms = 0
         for q in queries:
             use_context(snow, q.context)
             t0 = time.perf_counter()
             try:
-                snow.execute(q.sql)
+                ran[snow.execute(q.sql)] = q.id
             except DatabaseError as exc:
                 # A cold first execution can exceed the interactive timeout; the load test counts
                 # such statements against the failure gate, so warm-up only reports them.
@@ -60,6 +62,7 @@ def warm(snow: Snow, wh: Warehouse, queries: list[Query], events: Events) -> Non
                 events.emit("WARM", "warning", round=round_no, query=q.id, error=exc.msg)
             slowest_ms = max(slowest_ms, round((time.perf_counter() - t0) * 1000))
         events.emit("WARM", "progress", round=round_no, of=WARMUP_ROUNDS, slowest_ms=slowest_ms)
+    return ran
 
 
 def _child_env(**overrides: str) -> dict[str, str]:

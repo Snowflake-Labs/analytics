@@ -28,6 +28,7 @@ class Warehouse:
     tables: set[str] = field(default_factory=set)
     resumed: bool = False
     fallback: str | None = None
+    size: str | None = None
 
 
 def _show(snow: Snow, name: str) -> dict | None:
@@ -66,7 +67,8 @@ def planned(cfg: Config, run_id: str) -> Warehouse:
     """The warehouse the run uses, named before it is created so that teardown can always drop it."""
     if cfg.existing_warehouse:
         return Warehouse(cfg.existing_warehouse, created=False)
-    return Warehouse(f"{STALE_PREFIX}{run_id}_IW", created=True, fallback=cfg.fallback_warehouse)
+    return Warehouse(f"{STALE_PREFIX}{run_id}_IW", created=True, fallback=cfg.fallback_warehouse,
+                     size=cfg.new_warehouse.size)
 
 
 def prepare(cfg: Config, snow: Snow, tables: set[str], wh: Warehouse, run_id: str, events: Events) -> None:
@@ -87,7 +89,7 @@ def prepare(cfg: Config, snow: Snow, tables: set[str], wh: Warehouse, run_id: st
         if not_attached:
             events.emit("SETUP_WAREHOUSE", "warning", reason="tables not attached; reads are not cached",
                         tables=not_attached)
-        wh.name, wh.tables, wh.fallback = row["NAME"], _attached(row), fallback
+        wh.name, wh.tables, wh.fallback, wh.size = row["NAME"], _attached(row), fallback, row.get("SIZE")
         return
     new = cfg.new_warehouse
     assert new is not None

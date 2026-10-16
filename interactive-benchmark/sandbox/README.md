@@ -63,6 +63,8 @@ behaviour (see [How it works](#how-it-works)).
   warehouse here.
 - `name` (optional; a letter, then up to 30 letters, digits or `_`) becomes the uppercased run
   id prefix, and so the results folder name; anything else falls back to `IWB`.
+- `report` (optional): write the run to `SNOWFLAKE.INTERACTIVE_ANALYTICS`, where Snowsight reads
+  it (the `BENCHMARK_*` views). See [Writing the run to Snowflake](#writing-the-run-to-snowflake).
 - Each Locust user waits 0.5–1.5 s between requests, so `concurrent_users` is simulated
   dashboard users, not concurrent queries: each user sends about one query per second,
   so 50 users gave about 47 queries/s.
@@ -84,10 +86,10 @@ the run progresses, then `result.json`:
 
 `server` counts only statements that ended inside `window`. `client` comes from Locust's
 stats CSV, which can trail its final console summary (in `locust_run.log`) by a fraction of
-a second of requests, so `client` may be slightly below `server`. There is no per-query
-breakdown: query `INFORMATION_SCHEMA.QUERY_HISTORY_BY_USER` with the run id as `QUERY_TAG`
-while it is fresh, split by time, since its `RESULT_LIMIT` of 10,000 applies before your
-filter. `QUERY_HISTORY_BY_WAREHOUSE` returns nothing once a created warehouse is dropped.
+a second of requests, so `client` may be slightly below `server`. `result.json` has no
+per-query breakdown; [`report`](#writing-the-run-to-snowflake) writes one. Otherwise query
+`INFORMATION_SCHEMA.QUERY_HISTORY_BY_USER` with the run id as `QUERY_TAG` while it is fresh,
+split by time, since its `RESULT_LIMIT` of 10,000 applies before your filter. `QUERY_HISTORY_BY_WAREHOUSE` returns nothing once a created warehouse is dropped.
 
 With `--results-stage`, every file (Locust CSVs and HTML reports, API and Locust logs,
 `workload.json`, `result.json`) is copied to `@<stage>/<run_id>/` when the run ends. The
@@ -116,7 +118,31 @@ which `GET` downloads as a `.part#...` file; ignore it.
 
 When the run exits without the controller's final event, or with a different code, the launcher also prints the tail of the run log.
 
+## Writing the run to Snowflake
+
+With `"report": {"warehouse": "MY_STD_WH", "benchmark_id": "...", "description": "...", "tags": {...}}`
+(only `warehouse` is required), the controller calls `SNOWFLAKE.INTERACTIVE_ANALYTICS.WRITE_BENCHMARK_REPORT`
+twice. The first call happens once the workload is resolved and before any warehouse is created:
+status `RUNNING`, with the queries. The second happens after teardown, with the final status:
+`COMPLETED` (result `SUCCESS` or `FAIL`), `CANCELLED` or `ERROR`. That call also carries one test
+with the workload and per-query latency and the 25 slowest statements. Both are `REPORT` events.
+
+- `warehouse` must be a standard warehouse: an interactive warehouse cannot call procedures.
+- `benchmark_id` defaults to the run id. The procedure replaces a benchmark's rows on every call,
+  and only its creator may update it, so let the controller be its only writer.
+- If the first call fails (no access to the procedure, or the feature is not enabled on the
+  account), the run stops with exit 30 before creating anything. If the last call fails, the run
+  records `report_error` in `result.json` and exits 1 unless it had already failed.
+- Per-query rows need each statement's `QUERY_HASH`. Two queries with the same text in different
+  contexts share one, so they only count in the workload row.
+- To test against a copy of the procedure on an account without the feature, set
+  `IWB_REPORT_PROCEDURE` to its fully qualified name.
+
 ## Privileges for the sandbox role
+
+Granting `SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE` to the role the benchmark runs as covers
+`CREATE WAREHOUSE` and the report procedure. That role still needs access to its data, a
+standard warehouse for `report.warehouse`, and permission to create sandboxes. In detail:
 
 - Creating a sandbox: the required privilege is not documented yet; `SYSADMIN` works.
 - SELECT on every table the queries read, plus USAGE on their database/schema. Grant
@@ -128,6 +154,8 @@ When the run exits without the controller's final event, or with a different cod
 - `workload.query_ids`: your own queries (any role), or MONITOR on the user or the query's
   warehouse.
 - `--results-stage`: READ and WRITE on the stage.
+- `report`: USAGE on `SNOWFLAKE.INTERACTIVE_ANALYTICS.WRITE_BENCHMARK_REPORT` (through the
+  `SNOWFLAKE.INTERACTIVE_BENCHMARK_WRITER` application role), and USAGE on `report.warehouse`.
 
 ## Troubleshooting
 
