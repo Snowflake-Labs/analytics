@@ -63,6 +63,18 @@ def cleanup_stale(snow: Snow, events: Events, now: float | None = None) -> None:
             events.emit("CLEANUP", "completed", dropped=row["NAME"], stale_run_id=match.group(1))
 
 
+def _size(shown: str | None) -> str | None:
+    """SHOW WAREHOUSES' size ("X-Small", "2X-Large") as the config spells it ("XSMALL", "XXLARGE")."""
+    if not shown:
+        return None
+    size = shown.upper().replace("-", "")
+    multiple = re.fullmatch(r"(\d)XLARGE", size)
+    if multiple:
+        n = int(multiple[1])
+        return "X" * n + "LARGE" if n <= 3 else f"X{n}LARGE"
+    return size
+
+
 def planned(cfg: Config, run_id: str) -> Warehouse:
     """The warehouse the run uses, named before it is created so that teardown can always drop it."""
     if cfg.existing_warehouse:
@@ -89,7 +101,7 @@ def prepare(cfg: Config, snow: Snow, tables: set[str], wh: Warehouse, run_id: st
         if not_attached:
             events.emit("SETUP_WAREHOUSE", "warning", reason="tables not attached; reads are not cached",
                         tables=not_attached)
-        wh.name, wh.tables, wh.fallback, wh.size = row["NAME"], _attached(row), fallback, row.get("SIZE")
+        wh.name, wh.tables, wh.fallback, wh.size = row["NAME"], _attached(row), fallback, _size(row.get("SIZE"))
         return
     new = cfg.new_warehouse
     assert new is not None

@@ -153,6 +153,11 @@ class WarehouseTest(unittest.TestCase):
         self.sleep = patch("iwb.warehouse.time.sleep").start()
         self.addCleanup(patch.stopall)
 
+    def test_shown_size_is_spelled_as_in_the_config(self) -> None:
+        for shown, size in {"X-Small": "XSMALL", "Medium": "MEDIUM", "2X-Large": "XXLARGE", "3X-Large": "XXXLARGE",
+                            "4X-Large": "X4LARGE", None: None}.items():
+            self.assertEqual(size, warehouse._size(shown))
+
     def test_existing_must_be_interactive(self) -> None:
         snow = FakeSnow().on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "STANDARD"}])
         with self.assertRaisesRegex(ConfigError, "not INTERACTIVE"):
@@ -490,14 +495,14 @@ class MetricsTest(unittest.TestCase):
             return [{"QUERY_ID": f"{start}", "QUERY_TAG": "RUN"}]
 
         snow = FakeSnow().on("QUERY_HISTORY", history)
-        rows = metrics._collect(snow, "DB", "IW", "RUN", 0, 120, False)
+        rows = metrics._collect(snow, "DB", "IW", "RUN", 0, 120)
         self.assertEqual(8, len(rows))
         # 60 s and 30 s come back full; the remaining window is read in 15 s slices directly.
         self.assertEqual(10, len(snow.ran("QUERY_HISTORY")))
 
         always_full = FakeSnow().on("QUERY_HISTORY", lambda sql, params: [{}] * limit)
         with self.assertRaisesRegex(RuntimeError, "within one second"):
-            metrics._collect(always_full, "DB", "IW", "RUN", 0, 4, False)
+            metrics._collect(always_full, "DB", "IW", "RUN", 0, 4)
 
     def test_timed_out_slices_are_split_and_one_second_timeout_raises(self) -> None:
         def history(sql, params):
@@ -506,12 +511,12 @@ class MetricsTest(unittest.TestCase):
                 raise ProgrammingError(msg="Statement reached its statement or warehouse timeout", errno=630)
             return [{"QUERY_ID": f"{start}", "QUERY_TAG": "RUN"}]
 
-        rows = metrics._collect(FakeSnow().on("QUERY_HISTORY", history), "DB", "IW", "RUN", 0, 60, False)
+        rows = metrics._collect(FakeSnow().on("QUERY_HISTORY", history), "DB", "IW", "RUN", 0, 60)
         self.assertEqual(4, len(rows))
 
         timeout = ProgrammingError(msg="timeout", errno=630)
         with self.assertRaisesRegex(RuntimeError, "statement timeout"):
-            metrics._collect(FakeSnow().on("QUERY_HISTORY", timeout), "DB", "IW", "RUN", 0, 4, False)
+            metrics._collect(FakeSnow().on("QUERY_HISTORY", timeout), "DB", "IW", "RUN", 0, 4)
         with self.assertRaises(ProgrammingError):
             metrics._collect(FakeSnow().on("QUERY_HISTORY", ProgrammingError(msg="denied", errno=3001)),
                              "DB", "IW", "RUN", 0, 60, False)

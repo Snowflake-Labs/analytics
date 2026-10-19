@@ -34,13 +34,15 @@ def _run_id(name: object) -> str:
     return f"{prefix}_{stamp}_{secrets.token_hex(2).upper()}"
 
 
-def _report_outcome(exit_code: int) -> tuple[str, str | None]:
-    """The benchmark report's (status, result) for a controller exit code."""
-    if exit_code in (EXIT_OK, EXIT_VERDICT_FAIL):
-        return "COMPLETED", "SUCCESS" if exit_code == EXIT_OK else "FAIL"
+def _report_outcome(exit_code: int, outcome: str | None) -> tuple[str, str | None, str | None]:
+    """The benchmark report's (status, result, error_code) for a controller exit code and load outcome."""
+    if exit_code == EXIT_OK:
+        return "COMPLETED", "SUCCESS", None
+    if exit_code == EXIT_VERDICT_FAIL:
+        return "COMPLETED", "FAIL", outcome
     if exit_code in (128 + signal.SIGINT, 128 + signal.SIGTERM):
-        return "CANCELLED", "CANCELLED"
-    return "ERROR", None
+        return "CANCELLED", "CANCELLED", "CANCELLED"
+    return "ERROR", None, {EXIT_INVALID: "INVALID_CONFIG", EXIT_INFRA: outcome}.get(exit_code) or "UNEXPECTED_ERROR"
 
 
 def _terminate(signum: int, _frame: object) -> None:
@@ -77,9 +79,9 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         snow = connect(connection_name)
         if cfg.report:
             # Part of VALIDATE: a refused write is missing access, and nesting a step would make its
-            # failure hide VALIDATE's.
+            # failure hide VALIDATE's. Assigned only once written, so a refused write is not retried.
             first = report.Reporter(cfg, run_id, result["started_at"])
-            first.write(snow, first.payload("CREATED", None, None))
+            first.write(snow, first.payload("CREATED"))
             reporter = first
             events.emit("VALIDATE", "progress", benchmark_id=reporter.benchmark_id, report_status="CREATED")
         queries = workload.resolve(cfg, snow)
@@ -92,7 +94,7 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         if reporter:
             events.emit("REPORT", "started")
             reporter.queries = queries
-            reporter.write(snow, reporter.payload("RUNNING", None, None))
+            reporter.write(snow, reporter.payload("RUNNING"))
             events.emit("REPORT", "completed", benchmark_id=reporter.benchmark_id, report_status="RUNNING")
 
         events.emit("SETUP_WAREHOUSE", "started")
@@ -154,8 +156,8 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         if reporter is not None:
             events.emit("REPORT", "started")
             try:
-                error_code = None if exit_code == EXIT_OK else (result.get("outcome") or f"EXIT_{exit_code}")
-                reporter.write(snow, reporter.payload(*_report_outcome(exit_code), wh, now_iso(), error_code,
+                status, report_result, error_code = _report_outcome(exit_code, result.get("outcome"))
+                reporter.write(snow, reporter.payload(status, report_result, wh, now_iso(), error_code,
                                                       result.get("error")))
                 result["benchmark_id"] = reporter.benchmark_id
                 events.emit("REPORT", "completed", benchmark_id=reporter.benchmark_id)

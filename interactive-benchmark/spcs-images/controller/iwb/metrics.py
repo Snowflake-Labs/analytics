@@ -30,19 +30,16 @@ def percentile(values: list[float], pct: float) -> float | None:
 
 
 def latency(elapsed: list[float]) -> dict[str, float | None]:
-    """Nearest-rank percentiles and min/max/avg, sorting once."""
+    """Nearest-rank percentiles and min/max/avg."""
+    if not elapsed:
+        return dict.fromkeys(("p50_ms", "p90_ms", "p95_ms", "p99_ms", "min_ms", "max_ms", "avg_ms"))
     ordered = sorted(elapsed)
-
-    def pct(p: int) -> float | None:
-        return ordered[max(0, math.ceil(p / 100 * len(ordered)) - 1)] if ordered else None
-
-    return {"p50_ms": pct(50), "p90_ms": pct(90), "p95_ms": pct(95), "p99_ms": pct(99),
-            "min_ms": ordered[0] if ordered else None, "max_ms": ordered[-1] if ordered else None,
-            "avg_ms": sum(ordered) / len(ordered) if ordered else None}
+    return {**{f"p{p}_ms": percentile(ordered, p) for p in (50, 90, 95, 99)},
+            "min_ms": ordered[0], "max_ms": ordered[-1], "avg_ms": sum(ordered) / len(ordered)}
 
 
 def _fetch(snow: Snow, database: str, warehouse: str, start: int, end: int,
-           detail: bool) -> list[dict[str, Any]] | None:
+           detail: bool = False) -> list[dict[str, Any]] | None:
     """History rows ending in [start, end), or None if the result may be incomplete.
 
     RESULT_LIMIT applies before the QUERY_TAG filter, so a full result means rows were dropped. The
@@ -64,7 +61,7 @@ def _fetch(snow: Snow, database: str, warehouse: str, start: int, end: int,
 
 
 def _collect(snow: Snow, database: str, warehouse: str, tag: str, start: float, end: float,
-             detail: bool) -> list[dict[str, Any]]:
+             detail: bool = False) -> list[dict[str, Any]]:
     """Read the window in slices, halving the slice length (for the rest of the window too) while a
     slice comes back incomplete."""
     rows: list[dict[str, Any]] = []

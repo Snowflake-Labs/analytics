@@ -10,13 +10,18 @@ from iwb import cli, config, metrics, report, warehouse, workload
 from iwb.config import Context
 
 
-def reporter(**overrides):
+def reporter(resolved=True, **overrides):
     cfg = config.parse(base(report={"warehouse": "STD", "benchmark_id": "B1", "tags": {"team": "ui"}}, **overrides))
-    queries = [workload.Query("q01", "select 1", 100 / 3, Context("DB", "S"), QID1),
-               workload.Query("q02", "select 2", 200 / 3, Context("DB", "S"), "sql")]
     r = report.Reporter(cfg, "RUN", "2026-10-15T00:00:00+00:00")
-    r.queries = queries
+    if resolved:
+        r.queries = [workload.Query("q01", "select 1", 100 / 3, Context("DB", "S"), QID1),
+                     workload.Query("q02", "select 2", 200 / 3, Context("DB", "S"), "sql")]
     return r
+
+
+def calls(snow):
+    """The payloads of the procedure calls the fake received."""
+    return [json.loads(params[0]) for sql, params in snow.statements if sql.startswith("CALL ")]
 
 
 def statement(qid, hash_, ms, status="SUCCESS"):
@@ -38,9 +43,8 @@ class WeightsTest(unittest.TestCase):
 
 class ReporterTest(unittest.TestCase):
     def test_created_report_has_the_inputs_as_given(self) -> None:
-        r = reporter(name="EU", warehouse={"create": {"size": "SMALL", "max_cluster_count": 2}})
-        r.queries = None
-        payload = r.payload("CREATED", None, None)
+        r = reporter(resolved=False, name="EU", warehouse={"create": {"size": "SMALL", "max_cluster_count": 2}})
+        payload = r.payload("CREATED")
         self.assertEqual(("CREATED", "EU", 10, 60, {"team": "ui"}),
                          (payload["status"], payload["name"], payload["requested_concurrency"],
                           payload["runtime_seconds"], payload["tags"]))
@@ -53,14 +57,14 @@ class ReporterTest(unittest.TestCase):
                           test["max_cluster_count"], test["warehouse_created_for_run"]))
 
     def test_created_report_lists_each_query_id_once_without_text(self) -> None:
-        cfg = config.parse(base(report={"warehouse": "STD"}, workload={"query_ids": [QID1, QID1, QID2]}))
+        r = reporter(resolved=False, workload={"query_ids": [QID1, QID1, QID2]})
         self.assertEqual([(QID1, "q01", None, "QUERY_HISTORY", QID1, 66.67),
                           (QID2, "q03", None, "QUERY_HISTORY", QID2, 33.33)],
                          [(q["query_id"], q["query_name"], q["query_text"], q["source_type"], q["source_reference"],
-                           q["weight_percent"]) for q in report.declared_queries(cfg)])
+                           q["weight_percent"]) for q in r.payload("CREATED")["queries"]])
 
     def test_running_report_has_the_workload_and_a_running_test(self) -> None:
-        payload = reporter().payload("RUNNING", None, None)
+        payload = reporter().payload("RUNNING")
         self.assertEqual(("B1", "RUNNING", None, 1), (payload["benchmark_id"], payload["status"], payload["result"],
                                                      payload["report_version"]))
         self.assertEqual([(QID1, "QUERY_HISTORY", QID1, 33.33), ("q02", "MANUAL", None, 66.67)],
@@ -98,15 +102,20 @@ class ReporterTest(unittest.TestCase):
         r = reporter(warehouse={"create": {"size": "SMALL"}})
         wh = warehouse.planned(r.cfg, "RUN")
         wh.created = False
-        test = r.payload("ERROR", None, wh)["tests"][0]
+        test = r.payload("ERROR", wh=wh)["tests"][0]
         self.assertEqual((False, False), (test["warehouse_created_for_run"], test["delete_warehouse_after_run"]))
 
     def test_report_outcome_follows_the_exit_code(self) -> None:
-        cases = {0: ("COMPLETED", "SUCCESS"), 20: ("COMPLETED", "FAIL"), 143: ("CANCELLED", "CANCELLED"),
-                 130: ("CANCELLED", "CANCELLED"), 30: ("ERROR", None), 40: ("ERROR", None), 1: ("ERROR", None)}
-        for code, expected in cases.items():
+        cases = {(0, "PASS"): ("COMPLETED", "SUCCESS", None),
+                 (20, "BENCHMARK_FAIL"): ("COMPLETED", "FAIL", "BENCHMARK_FAIL"),
+                 (143, "PASS"): ("CANCELLED", "CANCELLED", "CANCELLED"),
+                 (130, None): ("CANCELLED", "CANCELLED", "CANCELLED"),
+                 (30, None): ("ERROR", None, "INVALID_CONFIG"),
+                 (40, "BASELINE_FAIL"): ("ERROR", None, "BASELINE_FAIL"),
+                 (1, "PASS"): ("ERROR", None, "UNEXPECTED_ERROR")}
+        for (code, outcome), expected in cases.items():
             with self.subTest(code):
-                self.assertEqual(expected, cli._report_outcome(code))
+                self.assertEqual(expected, cli._report_outcome(code, outcome))
 
     def test_query_hashes_skip_hashes_shared_by_two_queries(self) -> None:
         snow = FakeSnow().on(r"QUERY_HISTORY_BY_SESSION", [
@@ -134,8 +143,7 @@ class DetailColumnsTest(unittest.TestCase):
 class CliReportTest(unittest.TestCase):
     def run_cli(self, snow):
         code, snow, result, events = run_cli("runner.warm", SystemExit(143), snow, report={"warehouse": "STD"})
-        calls = [json.loads(params[0]) for sql, params in snow.statements if sql.startswith("CALL ")]
-        return code, calls, result, events
+        return code, calls(snow), result, events
 
     def test_report_written_at_start_and_after_teardown(self) -> None:
         snow = FakeSnow()
@@ -160,13 +168,14 @@ class CliReportTest(unittest.TestCase):
 
     def test_a_run_that_fails_validation_is_reported_as_error_with_its_inputs(self) -> None:
         code, snow, result, events = run_cli(report={"warehouse": "STD"}, workload={"query_ids": [QID1]})
-        calls = [json.loads(params[0]) for sql, params in snow.statements if sql.startswith("CALL ")]
+        created, final = calls(snow)
         self.assertEqual(30, code)
-        self.assertEqual(["CREATED", "ERROR"], [c["status"] for c in calls])
-        self.assertIn("Query IDs not found", calls[1]["error_message"])
-        self.assertEqual([QID1], [q["query_id"] for q in calls[1]["queries"]])
+        self.assertEqual(("CREATED", "ERROR", "INVALID_CONFIG"),
+                         (created["status"], final["status"], final["error_code"]))
+        self.assertIn("Query IDs not found", final["error_message"])
+        self.assertEqual([QID1], [q["query_id"] for q in final["queries"]])
         self.assertEqual([], snow.ran("^CREATE"))
-        test = calls[1]["tests"][0]
+        test = final["tests"][0]
         self.assertEqual((False, False), (test["warehouse_created_for_run"], test["delete_warehouse_after_run"]))
         self.assertTrue(test["warehouse_name"].endswith("_IW"))
         self.assertEqual(["VALIDATE", "RUN"], [e["step"] for e in events if e["status"] == "failed"])
@@ -174,9 +183,8 @@ class CliReportTest(unittest.TestCase):
     def test_a_refused_running_write_ends_in_error_before_creating_a_warehouse(self) -> None:
         snow = FakeSnow().on(r"^CALL ", iter([[], ProgrammingError(msg="lock timeout", errno=625), []]))
         code, snow, result, _ = run_cli(snow=snow, report={"warehouse": "STD"})
-        calls = [json.loads(params[0]) for sql, params in snow.statements if sql.startswith("CALL ")]
         self.assertEqual(30, code)
-        self.assertEqual(["CREATED", "RUNNING", "ERROR"], [c["status"] for c in calls])
+        self.assertEqual(["CREATED", "RUNNING", "ERROR"], [c["status"] for c in calls(snow)])
         self.assertEqual([], snow.ran("^CREATE"))
 
     def test_final_report_failure_is_in_the_result(self) -> None:

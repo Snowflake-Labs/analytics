@@ -89,7 +89,8 @@ stats CSV, which can trail its final console summary (in `locust_run.log`) by a 
 a second of requests, so `client` may be slightly below `server`. `result.json` has no
 per-query breakdown; [`report`](#writing-the-run-to-snowflake) writes one. Otherwise query
 `INFORMATION_SCHEMA.QUERY_HISTORY_BY_USER` with the run id as `QUERY_TAG` while it is fresh,
-split by time, since its `RESULT_LIMIT` of 10,000 applies before your filter. `QUERY_HISTORY_BY_WAREHOUSE` returns nothing once a created warehouse is dropped.
+split by time, since its `RESULT_LIMIT` of 10,000 applies before your filter.
+`QUERY_HISTORY_BY_WAREHOUSE` returns nothing once a created warehouse is dropped.
 
 With `--results-stage`, every file (Locust CSVs and HTML reports, API and Locust logs,
 `workload.json`, `result.json`) is copied to `@<stage>/<run_id>/` when the run ends. The
@@ -129,10 +130,11 @@ three times. The first is a `VALIDATE` `progress` event, the others `REPORT` eve
    and weights, or each query ID with its weight and no text yet). A run that then fails
    validation still has this row, and its final call records `ERROR` with the reason.
 2. Once the workload is resolved, before any warehouse is created: status `RUNNING`, with the
-   resolved queries (query IDs with the same text are merged).
+   resolved queries (queries with the same text and context are merged).
 3. After teardown, with the final status: `COMPLETED` (result `SUCCESS` or `FAIL`), `CANCELLED` or
-   `ERROR`. It also carries one test with the workload and per-query latency and the 25 slowest
-   statements.
+   `ERROR`, with an `error_code` (`INVALID_CONFIG`, the load outcome such as `BASELINE_FAIL`, or
+   `UNEXPECTED_ERROR`). It also carries one test with the workload and per-query latency and the
+   25 slowest statements.
 
 - `warehouse` must be a standard warehouse: an interactive warehouse cannot call procedures.
 - `benchmark_id` defaults to the run id. The procedure replaces a benchmark's rows on every call,
@@ -140,8 +142,8 @@ three times. The first is a `VALIDATE` `progress` event, the others `REPORT` eve
 - If the first call fails (no access to the procedure, or the feature is not enabled on the
   account), the run stops with exit 30 before looking anything up, and makes no further calls.
   If the second fails, the run stops with exit 30 before creating a warehouse, and the last call
-  records `ERROR`. If the last call fails, the run
-  records `report_error` in `result.json` and exits 1 unless it had already failed.
+  records `ERROR`. If the last call fails, the run records `report_error` in `result.json` and
+  exits 1 unless it had already failed.
 - Per-query rows need each statement's `QUERY_HASH`. Two queries with the same text in different
   contexts share one, so they only count in the workload row.
 - To test against a copy of the procedure on an account without the feature, set

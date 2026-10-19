@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from snowflake.connector.errors import ProgrammingError
 
@@ -29,7 +29,7 @@ def qualified(context: Context) -> str:
 @dataclass(frozen=True)
 class Query:
     id: str
-    sql: str
+    sql: str | None  # None for a query ID until it is looked up
     weight: float
     context: Context
     source: str  # "sql", or the query ID it was read from
@@ -86,8 +86,8 @@ def _history(snow: Snow, query_ids: list[str], lookup_warehouse: str | None) -> 
     return found
 
 
-def _from_query_ids(cfg: Config, snow: Snow) -> list[Query]:
-    ids = [e.query_id for e in cfg.query_id_entries]
+def _from_query_ids(cfg: Config, snow: Snow, queries: list[Query]) -> list[Query]:
+    ids = [q.source for q in queries]
     history = _history(snow, sorted(set(ids)), cfg.lookup_warehouse)
     missing = sorted(set(ids) - history.keys())
     if missing:
@@ -96,25 +96,23 @@ def _from_query_ids(cfg: Config, snow: Snow) -> list[Query]:
             "user or warehouse; last 14 days by default; set lookup_warehouse to also search "
             f"ACCOUNT_USAGE, 365 days): {missing}"
         )
-    equal = 100 / len(cfg.query_id_entries)
-    queries = []
-    for i, entry in enumerate(cfg.query_id_entries, 1):
-        row = history[entry.query_id]
+    resolved = []
+    for q in queries:
+        row = history[q.source]
         if row["QUERY_TYPE"] != "SELECT":
             kind = f" ({row['QUERY_TYPE']})" if row["QUERY_TYPE"] else ""
-            raise ConfigError(f"Query {entry.query_id} is not a SELECT{kind}")
+            raise ConfigError(f"Query {q.source} is not a SELECT{kind}")
         if row["EXECUTION_STATUS"] != "SUCCESS":
-            raise ConfigError(f"Query {entry.query_id} did not succeed ({row['EXECUTION_STATUS']})")
+            raise ConfigError(f"Query {q.source} did not succeed ({row['EXECUTION_STATUS']})")
         if not row["QUERY_TEXT"]:
-            raise ConfigError(f"Query {entry.query_id} has no query text visible to this role")
+            raise ConfigError(f"Query {q.source} has no query text visible to this role")
         context = (
             Context(row["DATABASE_NAME"], row["SCHEMA_NAME"])
             if row["DATABASE_NAME"] and row["SCHEMA_NAME"]
             else cfg.context
         )
-        weight = entry.weight_pct if entry.weight_pct is not None else equal
-        queries.append(Query(f"q{i:02d}", row["QUERY_TEXT"], weight, context, entry.query_id))
-    return queries
+        resolved.append(replace(q, sql=row["QUERY_TEXT"], context=context))
+    return resolved
 
 
 def _merge_duplicates(queries: list[Query]) -> list[Query]:
@@ -129,14 +127,19 @@ def _merge_duplicates(queries: list[Query]) -> list[Query]:
     return list(merged.values())
 
 
-def resolve(cfg: Config, snow: Snow) -> list[Query]:
+def declared(cfg: Config) -> list[Query]:
+    """The workload as configured, before any lookup."""
     if cfg.sql_entries:
-        queries = [
-            Query(f"q{i:02d}", e.sql, e.weight_pct, e.context, "sql")
-            for i, e in enumerate(cfg.sql_entries, 1)
-        ]
-    else:
-        queries = _from_query_ids(cfg, snow)
+        return [Query(f"q{i:02d}", e.sql, e.weight_pct, e.context, "sql") for i, e in enumerate(cfg.sql_entries, 1)]
+    equal = 100 / len(cfg.query_id_entries)
+    return [Query(f"q{i:02d}", None, equal if e.weight_pct is None else e.weight_pct, cfg.context, e.query_id)
+            for i, e in enumerate(cfg.query_id_entries, 1)]
+
+
+def resolve(cfg: Config, snow: Snow) -> list[Query]:
+    queries = declared(cfg)
+    if not cfg.sql_entries:
+        queries = _from_query_ids(cfg, snow, queries)
     return _merge_duplicates(queries)
 
 

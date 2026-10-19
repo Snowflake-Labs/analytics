@@ -208,7 +208,7 @@
           "type": "object"
         }
       },
-      "description": "Write the run to SNOWFLAKE.INTERACTIVE_ANALYTICS (the BENCHMARK_* views) with WRITE_BENCHMARK_REPORT: CREATED with the inputs once connected, RUNNING once the workload is resolved, then the final state. Needs USAGE on the procedure, which SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE has."
+      "description": "Write the run to SNOWFLAKE.INTERACTIVE_ANALYTICS (the BENCHMARK_* views) with WRITE_BENCHMARK_REPORT; see the sandbox README."
     }
   },
   "$defs": {
