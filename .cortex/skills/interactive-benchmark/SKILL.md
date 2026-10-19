@@ -135,7 +135,7 @@ iteration. Steps 3.4, 3.6, 3.10, 3.12 and 3.13 each call it once, as `created`, 
 `iteration`, then `final`. If the role cannot see `WRITE_BENCHMARK_REPORT`, `created` says the report
 is skipped and the later calls do nothing; tell the user that granting
 `SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE` to the role enables it. Any other failure is an error: show it
-to the user.
+to the user, then continue the benchmark; the HTML report does not depend on it.
 
 ---
 
@@ -481,7 +481,8 @@ Each time the load test runs (Step 3.8), capture the full Locust output (via `ba
 4. Use the `grep` tool to verify no `{{` placeholders remain: `grep '{{' <output-file>` must return zero matches
 5. Use `open_browser` to open the report for the user
 6. **Snowsight report (mandatory):** run
-   `cd <SKILL_DIR>/benchmark/scripts && ./write-report.sh <REPORT_DIR> final COMPLETED`
+   `cd <SKILL_DIR>/benchmark/scripts && ./write-report.sh <REPORT_DIR> final COMPLETED <RESULT>`, where
+   `<RESULT>` is `SUCCESS` if the P95 goal was met and `FAIL` if it was not (including limit-bound runs)
 
 ---
 
@@ -525,7 +526,7 @@ Request body: `{"query_id": "<id>"}`. Response includes `elapsed_ms`, `row_count
 
 - `benchmark/reports/<SOLUTION_NAME>/benchmark-report.html` — HTML report with executive summary, percentile charts, bottleneck diagnosis, escalation path, and optimization recommendations
 - `benchmark/reports/<SOLUTION_NAME>/locust-run-N.txt` — Raw Locust logs for each load test iteration (one per escalation step)
-- The benchmark in `SNOWFLAKE.INTERACTIVE_ANALYTICS` (`benchmark_id` = `<SOLUTION_NAME>`), for Snowsight, unless the report was skipped
+- The benchmark in `SNOWFLAKE.INTERACTIVE_ANALYTICS` (`benchmark_id` = `<SOLUTION_NAME>_<UTC timestamp>`, printed by `write-report.sh`), for Snowsight, unless the report was skipped
 - Snowflake resources (interactive warehouse, tables, SPCS services) — listed in Step 3.13 for cleanup or reuse
 
 ## Checklist and Troubleshooting

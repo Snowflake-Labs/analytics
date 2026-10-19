@@ -9,7 +9,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 mkdir -p "$TMP_DIR/queries" "$TMP_DIR/report"
 echo "SELECT 1;" >"$TMP_DIR/queries/a-query.sql"
 echo "SELECT 2;" >"$TMP_DIR/queries/b-query.sql"
-echo "SELECT 3;" >"$TMP_DIR/queries/c-query.sql"
+echo "SELECT '\$\$x\$\$' AS c;" >"$TMP_DIR/queries/c-query.sql"
 
 cat >"$TMP_DIR/config.env" <<EOF
 CONNECTION=test
@@ -49,7 +49,8 @@ case "$input" in
   *"GROUPING SETS"*)
     echo '[[],[{"ALL_ROWS":1,"QUERY_HASH":null,"QUERY_TEXT":"SELECT 1;","N":30,"N_OK":29,"P50":10,"P95":20,"P99":30,"MIN_MS":1,"MAX_MS":40,"AVG_MS":12.5},
             {"ALL_ROWS":0,"QUERY_HASH":"H1","QUERY_TEXT":"SELECT 1;","N":20,"N_OK":20,"P50":9,"P95":18,"P99":19,"MIN_MS":1,"MAX_MS":20,"AVG_MS":10},
-            {"ALL_ROWS":0,"QUERY_HASH":"H2","QUERY_TEXT":"SELECT 2;","N":10,"N_OK":9,"P50":15,"P95":35,"P99":40,"MIN_MS":5,"MAX_MS":40,"AVG_MS":17.5}]]' ;;
+            {"ALL_ROWS":0,"QUERY_HASH":"H2","QUERY_TEXT":"SELECT 2;","N":10,"N_OK":9,"P50":15,"P95":35,"P99":40,"MIN_MS":5,"MAX_MS":40,"AVG_MS":17.5},
+            {"ALL_ROWS":0,"QUERY_HASH":null,"QUERY_TEXT":"SELECT 1;","N":3,"N_OK":3,"P50":1,"P95":1,"P99":1,"MIN_MS":1,"MAX_MS":1,"AVG_MS":1}]]' ;;
   *"ORDER BY TOTAL_ELAPSED_TIME DESC"*)
     python3 -c 'import json
 rows = [{"QUERY_ID": f"x{i}", "QUERY_HASH": "H1" if i % 2 else "H2", "EXECUTION_STATUS": "SUCCESS" if i else "FAILED_WITH_ERROR",
@@ -59,8 +60,9 @@ rows = [{"QUERY_ID": f"x{i}", "QUERY_HASH": "H1" if i % 2 else "H2", "EXECUTION_
 rows.insert(3, {**rows[3], "QUERY_ID": "unknown", "QUERY_HASH": "OTHER"})
 print(json.dumps([[], rows]))' ;;
   *"CALL "*)
+    if [[ -f "$fixtures/call-fails" ]]; then echo "NOT_BENCHMARK_CREATOR" >&2; exit 1; fi
     python3 -c 'import json, re, sys
-body = re.search(r"PARSE_JSON\(\$\$(.*)\$\$\)", sys.stdin.read(), re.S).group(1)
+body = re.search(r"PARSE_JSON\(\$\$(.*?)\$\$", sys.stdin.read(), re.S).group(1)  # ends where Snowflake ends it
 open(sys.argv[1], "a").write(json.dumps(json.loads(body)) + "\n")
 print(json.dumps([[], [{"WRITE_BENCHMARK_REPORT": {"result": "UPDATED"}}]]))' "$fixtures/calls.jsonl" <<<"$input" ;;
   *) echo "unexpected statement: $input" >&2; exit 1 ;;
@@ -80,14 +82,19 @@ run created --warehouse-created --description "goal P95 <= 1 s" >/dev/null
 [[ "$(last '[(q["query_id"], q["weight_percent"]) for q in d["queries"]]')" == \
    "[('a-query', 33.34), ('b-query', 33.33), ('c-query', 33.33)]" ]] || fail "query weights must sum to 100"
 [[ "$(last 'd["queries"][1]["query_text"], d["description"]')" == "SELECT 2; goal P95 <= 1 s" ]] || fail "query text"
+[[ "$(last 'd["queries"][2]["query_text"]')" == "SELECT '\$\$x\$\$' AS c;" ]] || fail "a query with \$\$ must survive the \$\$ literal"
+[[ "$(last 'bool(__import__("re").fullmatch(r"TEST_\d{14}", d["benchmark_id"])), d["error_code"]')" == "True None" ]] \
+  || fail "benchmark id / error_code: $(last 'd["benchmark_id"], d["error_code"]')"
+bid="$(last 'd["benchmark_id"]')"
 
 run running >/dev/null
-[[ "$(last 'd["status"]')" == "RUNNING" ]] || fail "running"
+[[ "$(last 'd["status"], d["error_code"]')" == "RUNNING None" ]] || fail "running"
 
-run iteration 1 1792440000 1792440180 >/dev/null
+run iteration 1 1792440000 1792440180 >/dev/null 2>"$TMP_DIR/warn"
+grep -q "warning: 3 statements in QH_RUN_1 match no single benchmark .sql file" "$TMP_DIR/warn" || fail "no unmatched warning"
 [[ "$(last 'd["status"], len(d["tests"])')" == "RUNNING 1" ]] || fail "iteration keeps the run RUNNING"
 test_fields='t["test_id"], t["attempt_number"], t["warehouse_size"], t["min_cluster_count"], t["max_cluster_count"], t["warehouse_created_for_run"]'
-[[ "$(last "(lambda t: ($test_fields))(d['tests'][0])")" == "('TEST_T1', 1, 'XXLARGE', 1, 3, True)" ]] \
+[[ "$(last "(lambda t: ($test_fields))(d['tests'][0])")" == "('${bid}_T1', 1, 'XXLARGE', 1, 3, True)" ]] \
   || fail "test row: $(last 'd["tests"][0]')"
 [[ "$(last '[(m["query_id"], m["sample_count"], m["throughput_qps"]) for m in d["tests"][0]["metrics"]]')" == \
    "[(None, 30, 0.16666666666666666), ('a-query', 20, 0.1111111111111111), ('b-query', 10, 0.05555555555555555)]" ]] \
@@ -97,9 +104,12 @@ test_fields='t["test_id"], t["attempt_number"], t["warehouse_size"], t["min_clus
 [[ "$(last 'd["tests"][0]["executions"][0]["status"], d["tests"][0]["started_at"]')" == "FAILED 2026-10-19T20:00:00+00:00" ]] \
   || fail "execution status / test start"
 
-run iteration 2 1792440600 1792440780 >/dev/null
-run iteration 2 1792440600 1792440780 >/dev/null
-[[ "$(last '[t["test_id"] for t in d["tests"]]')" == "['TEST_T1', 'TEST_T2']" ]] || fail "re-running an iteration replaces it"
+rm "$TMP_DIR/queries/a-query.sql"
+run iteration 2 1792440600 1792440780 >/dev/null 2>&1
+run iteration 2 1792440600 1792440780 >/dev/null 2>&1
+[[ "$(last '[t["test_id"] for t in d["tests"]]')" == "['${bid}_T1', '${bid}_T2']" ]] || fail "re-running an iteration replaces it"
+[[ "$(last '[(q["query_id"], q["weight_percent"]) for q in d["queries"]]')" == \
+   "[('b-query', 50.0), ('c-query', 50.0), ('a-query', 0.0)]" ]] || fail "a removed query stays at weight 0: $(last 'd["queries"]')"
 
 run final COMPLETED >/dev/null
 [[ "$(last 'd["status"], d["result"], d["error_code"], len(d["tests"]), d["completed_at"] is not None')" == \
@@ -109,6 +119,11 @@ run final ERROR --message "deploy failed" >/dev/null
   || fail "final error"
 if run final COMPLETED MAYBE >/dev/null 2>&1; then fail "an unknown result was accepted"; fi
 
+echo "SELECT 1;" >"$TMP_DIR/queries/a-query.sql"
+sleep 1
+run created >/dev/null
+[[ "$(last 'd["benchmark_id"]')" != "$bid" ]] || fail "a new run reused the earlier benchmark id"
+
 calls_before="$(wc -l <"$TMP_DIR/calls.jsonl")"
 touch "$TMP_DIR/no-access"
 output="$(run created)"
@@ -117,7 +132,10 @@ run running >/dev/null
 run final COMPLETED >/dev/null
 [[ "$(wc -l <"$TMP_DIR/calls.jsonl")" == "$calls_before" ]] || fail "a skipped report still called the procedure"
 
-rm "$TMP_DIR/report/benchmark-report-state.json"
+rm "$TMP_DIR/report/benchmark-report-state.json" "$TMP_DIR/no-access"
 if run running >/dev/null 2>&1; then fail "running without created was accepted"; fi
+touch "$TMP_DIR/call-fails"
+if run created >/dev/null 2>&1; then fail "a refused created write passed"; fi
+[[ ! -e "$TMP_DIR/report/benchmark-report-state.json" ]] || fail "a refused created write left a state file"
 
 echo "write-report contract passed."

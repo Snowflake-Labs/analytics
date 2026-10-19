@@ -5,6 +5,7 @@
 #   write-report.sh <report_dir> running
 #   write-report.sh <report_dir> iteration <N> <RUN_START> <RUN_END>   # after QH_RUN_<N> exists
 #   write-report.sh <report_dir> final <COMPLETED|ERROR|CANCELLED> [SUCCESS|FAIL] [--message TEXT]
+#     (COMPLETED defaults to SUCCESS; the skill passes FAIL when the P95 goal was not met)
 #
 # WRITE_BENCHMARK_REPORT replaces everything stored for the benchmark on each call, so every call
 # sends the full state, kept in <report_dir>/benchmark-report-state.json. Each escalation iteration
@@ -16,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_lib.sh"
 
 if (( $# < 2 )); then
-  sed -n '3,7p' "$0" >&2
+  sed -n '3,8p' "$0" >&2
   exit 1
 fi
 
@@ -75,15 +76,18 @@ def weights_percent(count: int) -> list[float]:
     return [(base + (1 if i < extra else 0)) / 100 for i in range(count)]
 
 
-def queries() -> list[dict]:
+def queries(previous: list[dict]) -> list[dict]:
+    """The benchmark .sql files, equally weighted. A file removed mid-run stays at weight 0, so earlier
+    iterations' rows still reference a query in the report."""
     files = sorted(Path(env["BENCHMARK_QUERY_DIR"]).glob("*.sql"))
-    texts = [(f.stem, f.read_text().strip()) for f in files]
-    texts = [(stem, text) for stem, text in texts if text]  # the API skips empty files too
+    texts = {f.stem: f.read_text().strip() for f in files}
+    texts = {stem: text for stem, text in texts.items() if text}  # the API skips empty files too
     if not texts:
         fail(f"no benchmark .sql files in {env['BENCHMARK_QUERY_DIR']}")
+    rows = [(stem, text, w) for (stem, text), w in zip(texts.items(), weights_percent(len(texts)), strict=True)]
+    rows += [(q["query_id"], q["query_text"], 0.0) for q in previous if q["query_id"] not in texts]
     return [{"query_id": stem, "query_order": i, "query_text": text, "query_name": stem, "weight_percent": w,
-             "source_type": "MANUAL"}
-            for i, ((stem, text), w) in enumerate(zip(texts, weights_percent(len(texts)), strict=True), 1)]
+             "source_type": "MANUAL"} for i, (stem, text, w) in enumerate(rows, 1)]
 
 
 def size(shown: str | None) -> str | None:
@@ -114,11 +118,16 @@ SELECT GROUPING(QUERY_HASH) AS ALL_ROWS, QUERY_HASH, ANY_VALUE(QUERY_TEXT) AS QU
   MIN(TOTAL_ELAPSED_TIME) AS MIN_MS, MAX(TOTAL_ELAPSED_TIME) AS MAX_MS, AVG(TOTAL_ELAPSED_TIME) AS AVG_MS
 FROM q GROUP BY GROUPING SETS ((), (QUERY_HASH));""")
     by_text: dict[str, list[str]] = {}
-    for q in queries():
+    for q in state["queries"]:
         by_text.setdefault(q["query_text"], []).append(q["query_id"])
     # A hash maps to a query by its text; two files with the same text cannot be told apart.
     owner = {g["QUERY_HASH"]: by_text[g["QUERY_TEXT"].strip()][0] for g in groups
-             if not g["ALL_ROWS"] and len(by_text.get((g["QUERY_TEXT"] or "").strip(), [])) == 1}
+             if not g["ALL_ROWS"] and g["QUERY_HASH"] is not None
+             and len(by_text.get((g["QUERY_TEXT"] or "").strip(), [])) == 1}
+    unmatched = sum(g["N"] for g in groups if not g["ALL_ROWS"] and g["QUERY_HASH"] not in owner)
+    if unmatched:
+        print(f"write-report.sh: warning: {unmatched} statements in QH_RUN_{number} match no single benchmark "
+              ".sql file by text; they count only in the workload row.", file=sys.stderr)
     test_id = f"{state['benchmark_id']}_T{number}"
     window = run_end - run_start
 
@@ -177,15 +186,17 @@ def main(argv: list[str]) -> None:
         description = option(args, "--description")
         if args:
             fail(f"unexpected arguments: {args}")
-        state = {"benchmark_id": env["SOLUTION_NAME"], "started_at": now, "warehouse_created": created,
-                 "description": description, "skipped": False, "tests": []}
+        # A new id per run: a benchmark name reused for a later run must not replace this one.
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        state = {"benchmark_id": f"{env['SOLUTION_NAME']}_{stamp}", "started_at": now,
+                 "warehouse_created": created, "description": description, "skipped": False, "queries": [],
+                 "tests": []}
+        report_dir.mkdir(parents=True, exist_ok=True)
         if not procedure_visible():
             state["skipped"] = True
+            state_file.write_text(json.dumps(state, indent=2))
             print(f"Skipping the Snowsight benchmark report: {env['ROLE']} cannot see {PROCEDURE}. "
                   f"Grant {ROLE_TO_GRANT} to {env['ROLE']} to write it.")
-        report_dir.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(json.dumps(state, indent=2))
-        if state["skipped"]:
             return
         status, result, completed_at, message = "CREATED", None, None, None
     else:
@@ -196,6 +207,7 @@ def main(argv: list[str]) -> None:
             print("Snowsight benchmark report skipped (see the created step).")
             return
         status, result, completed_at, message = "RUNNING", None, None, None
+        state["queries"] = queries(state["queries"])
         if command == "running":
             if args:
                 fail(f"unexpected arguments: {args}")
@@ -217,17 +229,18 @@ def main(argv: list[str]) -> None:
             completed_at = now
         else:
             fail(f"unknown command {command!r}")
+    if command == "created":
+        state["queries"] = queries([])
     payload = {
         "report_version": 1, "benchmark_id": state["benchmark_id"], "name": env["SOLUTION_NAME"],
         "tags": {"source": "interactive-benchmark-skill"}, "description": state["description"],
         "status": status, "result": result, "requested_concurrency": int(env["LOCUST_USERS"]),
         "runtime_seconds": seconds(env["LOCUST_RUN_TIME"]), "started_at": state["started_at"],
-        "completed_at": completed_at, "error_code": None if status == "COMPLETED" else status,
-        "error_message": message, "queries": queries(), "tests": state["tests"],
+        "completed_at": completed_at, "error_code": {"ERROR": "ERROR", "CANCELLED": "CANCELLED"}.get(status),
+        "error_message": message, "queries": state["queries"], "tests": state["tests"],
     }
-    body = json.dumps(payload, default=str)
-    if "$$" in body:
-        fail("the report contains '$$', which cannot be sent inside a $$-quoted literal")
+    # "$" only occurs inside JSON strings, where \u0024 means the same; the body cannot end the $$ literal.
+    body = json.dumps(payload, default=str).replace("$", "\\u0024")
     reply = sql(f"USE WAREHOUSE {env['DEPLOY_WAREHOUSE']};\nCALL {PROCEDURE}(PARSE_JSON($${body}$$));")
     state_file.write_text(json.dumps(state, indent=2, default=str))
     outcome = next(iter(reply[0].values())) if reply else "{}"
