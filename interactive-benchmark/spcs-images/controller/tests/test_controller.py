@@ -66,6 +66,20 @@ class ConfigTest(unittest.TestCase):
             with self.subTest(message), self.assertRaisesRegex(ConfigError, message):
                 config.parse(raw)
 
+    def test_up_to_1000_query_ids(self) -> None:
+        ids = [f"01c793a5-0100-0001-0000-{i:012x}" for i in range(1001)]
+        self.assertEqual(1000, len(config.parse(base(workload={"query_ids": ids[:1000]})).query_id_entries))
+        with self.assertRaises(ConfigError) as raised:
+            config.parse(base(workload={"query_ids": ids}))
+        self.assertEqual("Invalid config: workload/query_ids: fails maxItems 1000", str(raised.exception))
+        with self.assertRaisesRegex(ConfigError, "^Invalid config: workload/query_ids/0: 'x' does not match"):
+            config.parse(base(workload={"query_ids": ["x"]}))
+
+    def test_worst_case_grows_with_the_workload(self) -> None:
+        small = config.parse(base(workload={"query_ids": [QID1]}))
+        large = config.parse(base(workload={"query_ids": [f"01c793a5-0100-0001-0000-{i:012x}" for i in range(1000)]}))
+        self.assertEqual(999 * budget.SECONDS_PER_QUERY, large.worst_case_seconds - small.worst_case_seconds)
+
     def test_schema_requires_context(self) -> None:
         raw = base()
         del raw["context"]
@@ -153,6 +167,11 @@ class WarehouseTest(unittest.TestCase):
         self.sleep = patch("iwb.warehouse.time.sleep").start()
         self.addCleanup(patch.stopall)
 
+    def test_shown_size_is_spelled_as_in_the_config(self) -> None:
+        for shown, size in {"X-Small": "XSMALL", "Medium": "MEDIUM", "2X-Large": "XXLARGE", "3X-Large": "XXXLARGE",
+                            "4X-Large": "X4LARGE", None: None}.items():
+            self.assertEqual(size, warehouse._size(shown))
+
     def test_existing_must_be_interactive(self) -> None:
         snow = FakeSnow().on(r"SHOW WAREHOUSES", [{"NAME": "IW", "TYPE": "STANDARD"}])
         with self.assertRaisesRegex(ConfigError, "not INTERACTIVE"):
@@ -171,7 +190,7 @@ class WarehouseTest(unittest.TestCase):
         self.assertIn("IWB_RUN_IW TABLES (DB.S.T1, DB.S.T2)", create)
         self.assertIn("WAREHOUSE_SIZE = 'SMALL' MIN_CLUSTER_COUNT = 1 MAX_CLUSTER_COUNT = 3", create)
         expires = int(re.search(r"COMMENT = 'iwb:RUN:expires=(\d+)'", create).group(1))
-        self.assertGreater(expires, time.time() + budget.worst_case_seconds(cfg.run_seconds, cfg.concurrent_users))
+        self.assertGreater(expires, time.time() + cfg.worst_case_seconds)
         self.assertEqual(["ALTER WAREHOUSE IWB_RUN_IW SET FALLBACK_WAREHOUSE = STD"], snow.ran("FALLBACK"))
         self.assertTrue(wh.created)
         self.assertEqual("STD", wh.fallback)
@@ -467,7 +486,7 @@ class MetricsTest(unittest.TestCase):
                    {**row("x", "IW", 1), "QUERY_TAG": "OTHER"}, row("ramp", "IW", 9000, end=0.3)],
             "STD": [row("c", "STD", 7000, end=2)],
         }[params[0]] if params[1] == 0 else [])
-        m = metrics.server_side(snow, "DB", "IW", "STD", "RUN", 0.6, 30)
+        m = metrics.summarize(metrics.statements(snow, "DB", "IW", "STD", "RUN", 0.6, 30), "IW")
         self.assertEqual((3, 0, 1), (m["n"], m["n_failed"], m["n_fallback"]))
         self.assertEqual(7000, m["p99_ms"])
         self.assertEqual(200, m["p95_interactive_only_ms"])
@@ -477,7 +496,7 @@ class MetricsTest(unittest.TestCase):
                "END_TIME": datetime.fromtimestamp(1, UTC), "TOTAL_ELAPSED_TIME": 5500, "COMPILATION_TIME": 1,
                "EXECUTION_TIME": 1, "QUEUED_MS": 2000, "QUERY_TAG": "RUN"}
         snow = FakeSnow().on(r"QUERY_HISTORY_BY_WAREHOUSE", lambda sql, params: [row] if params[1] == 0 else [])
-        m = metrics.server_side(snow, "DB", "IW", None, "RUN", 0, 30)
+        m = metrics.summarize(metrics.statements(snow, "DB", "IW", None, "RUN", 0, 30), "IW")
         self.assertEqual((1, 0), (m["n"], m["n_fallback"]))
 
     def test_full_slices_are_split_and_one_second_overflow_fails(self) -> None:
@@ -514,7 +533,7 @@ class MetricsTest(unittest.TestCase):
             metrics._collect(FakeSnow().on("QUERY_HISTORY", timeout), "DB", "IW", "RUN", 0, 4)
         with self.assertRaises(ProgrammingError):
             metrics._collect(FakeSnow().on("QUERY_HISTORY", ProgrammingError(msg="denied", errno=3001)),
-                             "DB", "IW", "RUN", 0, 60)
+                             "DB", "IW", "RUN", 0, 60, False)
 
     def test_percentile_nearest_rank(self) -> None:
         self.assertEqual(95, metrics.percentile(list(range(1, 101)), 95))

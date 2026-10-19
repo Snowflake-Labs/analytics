@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from iwb import config as config_module
-from iwb import metrics, runner, warehouse, workload
+from iwb import metrics, report, runner, warehouse, workload
 from iwb.config import ConfigError
 from iwb.events import Events, now_iso
 from iwb.snow import connect
@@ -32,6 +32,17 @@ def _run_id(name: object) -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     prefix = name.upper() if isinstance(name, str) and config_module.NAME_PATTERN.fullmatch(name) else "IWB"
     return f"{prefix}_{stamp}_{secrets.token_hex(2).upper()}"
+
+
+def _report_outcome(exit_code: int, outcome: str | None) -> tuple[str, str | None, str | None]:
+    """The benchmark report's (status, result, error_code) for a controller exit code and load outcome."""
+    if exit_code == EXIT_OK:
+        return "COMPLETED", "SUCCESS", None
+    if exit_code == EXIT_VERDICT_FAIL:
+        return "COMPLETED", "FAIL", outcome
+    if exit_code in (128 + signal.SIGINT, 128 + signal.SIGTERM):
+        return "CANCELLED", "CANCELLED", "CANCELLED"
+    return "ERROR", None, {EXIT_INVALID: "INVALID_CONFIG", EXIT_INFRA: outcome}.get(exit_code) or "UNEXPECTED_ERROR"
 
 
 def _terminate(signum: int, _frame: object) -> None:
@@ -59,12 +70,20 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
     exit_code = EXIT_CRASH
     snow = None
     wh = None
+    reporter = None
     try:
         results_dir.mkdir(parents=True, exist_ok=True)
         events.emit("VALIDATE", "started", config=config_path)
         # load() reports why the file could not be read.
         cfg = config_module.parse(raw) if raw is not None else config_module.load(config_path)
         snow = connect(connection_name)
+        if cfg.report:
+            # Part of VALIDATE: a refused write is missing access, and nesting a step would make its
+            # failure hide VALIDATE's. Assigned only once written, so a refused write is not retried.
+            first = report.Reporter(cfg, run_id, result["started_at"])
+            first.write(snow, first.payload("CREATED"))
+            reporter = first
+            events.emit("VALIDATE", "progress", benchmark_id=reporter.benchmark_id, report_status="CREATED")
         queries = workload.resolve(cfg, snow)
         tables = workload.discover_tables(snow, queries)
         result["workload"] = [
@@ -72,6 +91,11 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
             for q in queries
         ]
         events.emit("VALIDATE", "completed", queries=len(queries), tables=sorted(tables))
+        if reporter:
+            events.emit("REPORT", "started")
+            reporter.queries = queries
+            reporter.write(snow, reporter.payload("RUNNING"))
+            events.emit("REPORT", "completed", benchmark_id=reporter.benchmark_id, report_status="RUNNING")
 
         events.emit("SETUP_WAREHOUSE", "started")
         wh = warehouse.planned(cfg, run_id)
@@ -82,7 +106,7 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
                     tables=sorted(wh.tables))
 
         events.emit("WARM", "started")
-        runner.warm(snow, wh, queries, events)
+        warm_ids = runner.warm(snow, wh, queries, events)
         events.emit("WARM", "completed")
 
         load = runner.run_load(cfg, queries, wh, run_id, connection_name, results_dir, events)
@@ -96,9 +120,12 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
             events.emit("MEASURE", "started")
             start, end = load.window
             result["window"] = {"start": start, "end": end}
-            result["server"] = metrics.server_side(
-                snow, cfg.context.database, wh.name, wh.fallback, run_id, start, end,
-            )
+            statements = metrics.statements(snow, cfg.context.database, wh.name, wh.fallback, run_id, start, end,
+                                            detail=reporter is not None)
+            result["server"] = metrics.summarize(statements, wh.name)
+            if reporter:
+                reporter.measure(statements, report.query_hashes(snow, warm_ids), end - start)
+            del statements  # up to millions of rows; only the aggregates are kept through teardown
             events.emit("MEASURE", "completed", server=result["server"])
 
         exit_code = {"PASS": EXIT_OK, "BENCHMARK_FAIL": EXIT_VERDICT_FAIL}.get(load.outcome, EXIT_INFRA)
@@ -126,6 +153,18 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
                 exit_code = exit_code or EXIT_CRASH
         if wh is not None:
             result["warehouse"] = {"name": wh.name, "created": wh.created, "tables": sorted(wh.tables)}
+        if reporter is not None:
+            events.emit("REPORT", "started")
+            try:
+                status, report_result, error_code = _report_outcome(exit_code, result.get("outcome"))
+                reporter.write(snow, reporter.payload(status, report_result, wh, now_iso(), error_code,
+                                                      result.get("error")))
+                result["benchmark_id"] = reporter.benchmark_id
+                events.emit("REPORT", "completed", benchmark_id=reporter.benchmark_id)
+            except Exception as exc:  # noqa: BLE001 - the run's own result must still be written
+                result["report_error"] = str(exc)
+                events.emit("REPORT", "failed", benchmark_id=reporter.benchmark_id, error=str(exc))
+                exit_code = exit_code or EXIT_CRASH
         if snow is not None:
             try:
                 snow.close()

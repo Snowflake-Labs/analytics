@@ -88,7 +88,8 @@ def run_budget(config: dict, install: bool) -> timedelta:
     """Longer than the controller's worst case, so it times out and cleans up first; whole minutes
     (the sandbox's idle_suspend resolution)."""
     run_secs = budget.run_seconds(float(config["run_minutes"]))
-    seconds = budget.worst_case_seconds(run_secs, int(config["concurrent_users"])) + install * INSTALL_SECONDS
+    queries = len(next(iter(config["workload"].values())))
+    seconds = budget.worst_case_seconds(run_secs, int(config["concurrent_users"]), queries) + install * INSTALL_SECONDS
     return timedelta(minutes=math.ceil(seconds / 60))
 
 

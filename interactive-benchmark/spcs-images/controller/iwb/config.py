@@ -14,6 +14,7 @@ from iwb import budget
 SCHEMA = json.loads(Path(__file__).with_name("iwb-config.schema.json").read_text())
 NAME_PATTERN = re.compile(SCHEMA["properties"]["name"]["pattern"])
 WEIGHT_TOLERANCE = 0.01
+MAX_ERROR_CHARS = 300
 
 
 class ConfigError(Exception):
@@ -47,7 +48,17 @@ class NewWarehouse:
 
 
 @dataclass(frozen=True)
+class Report:
+    warehouse: str
+    benchmark_id: str | None = None
+    parent_benchmark_id: str | None = None
+    description: str | None = None
+    tags: dict | None = None
+
+
+@dataclass(frozen=True)
 class Config:
+    name: str | None
     context: Context
     sql_entries: tuple[SqlEntry, ...]
     query_id_entries: tuple[QueryIdEntry, ...]
@@ -57,10 +68,16 @@ class Config:
     lookup_warehouse: str | None
     concurrent_users: int
     run_minutes: float
+    report: Report | None
 
     @property
     def run_seconds(self) -> int:
         return budget.run_seconds(self.run_minutes)
+
+    @property
+    def worst_case_seconds(self) -> int:
+        return budget.worst_case_seconds(self.run_seconds, self.concurrent_users,
+                                         len(self.sql_entries or self.query_id_entries))
 
 
 def _context(raw: dict) -> Context:
@@ -73,12 +90,18 @@ def _check_weights(weights: list[float], what: str) -> None:
         raise ConfigError(f"{what} weight_pct values must sum to 100, got {total:g}")
 
 
+def _describe(error: jsonschema.ValidationError) -> str:
+    """The most specific failure inside a oneOf, without echoing a large instance (a long ID list)."""
+    error = jsonschema.exceptions.best_match([error])
+    message = error.message if len(error.message) <= MAX_ERROR_CHARS else f"fails {error.validator} {error.validator_value!r}"
+    return f"{'/'.join(map(str, error.absolute_path)) or '<root>'}: {message}"
+
+
 def parse(raw: dict) -> Config:
     validator = jsonschema.Draft202012Validator(SCHEMA)
     errors = sorted(validator.iter_errors(raw), key=lambda e: list(e.absolute_path))
     if errors:
-        details = "; ".join(f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message}" for e in errors)
-        raise ConfigError(f"Invalid config: {details}")
+        raise ConfigError(f"Invalid config: {'; '.join(_describe(e) for e in errors)}")
 
     context = _context(raw["context"])
     workload = raw["workload"]
@@ -112,6 +135,7 @@ def parse(raw: dict) -> Config:
             raise ConfigError("warehouse.create: min_cluster_count must not exceed max_cluster_count")
 
     return Config(
+        name=raw.get("name"),
         context=context,
         sql_entries=tuple(sql_entries),
         query_id_entries=tuple(query_id_entries),
@@ -121,6 +145,7 @@ def parse(raw: dict) -> Config:
         lookup_warehouse=raw.get("lookup_warehouse"),
         concurrent_users=raw["concurrent_users"],
         run_minutes=float(raw["run_minutes"]),
+        report=Report(**raw["report"]) if "report" in raw else None,
     )
 
 

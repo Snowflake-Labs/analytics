@@ -51,7 +51,8 @@ behaviour (see [How it works](#how-it-works)).
 
 - `workload`: either `queries` (SQL texts with `weight_pct` summing to 100; each may override
   `context`) or `query_ids` (IDs from query history: plain strings for equal weights, or
-  `{"query_id": ..., "weight_pct": ...}` for every ID, summing to 100).
+  `{"query_id": ..., "weight_pct": ...}` for every ID, summing to 100). Up to 100 `queries` or
+  1000 `query_ids`; setup grows with the count (see [Timing and sizing](#timing-and-sizing)).
 - `warehouse`: `create` (dropped when the run ends) or `{"existing": "MY_IW"}` (never altered
   or dropped; if it was suspended, it is resumed for the run and suspended again afterwards).
 - `fallback_warehouse` (optional): a standard warehouse that re-runs statements hitting the
@@ -63,6 +64,8 @@ behaviour (see [How it works](#how-it-works)).
   warehouse here.
 - `name` (optional; a letter, then up to 30 letters, digits or `_`) becomes the uppercased run
   id prefix, and so the results folder name; anything else falls back to `IWB`.
+- `report` (optional): write the run to `SNOWFLAKE.INTERACTIVE_ANALYTICS`, where Snowsight reads
+  it (the `BENCHMARK_*` views). See [Writing the run to Snowflake](#writing-the-run-to-snowflake).
 - Each Locust user waits 0.5–1.5 s between requests, so `concurrent_users` is simulated
   dashboard users, not concurrent queries: each user sends about one query per second,
   so 50 users gave about 47 queries/s.
@@ -84,10 +87,11 @@ the run progresses, then `result.json`:
 
 `server` counts only statements that ended inside `window`. `client` comes from Locust's
 stats CSV, which can trail its final console summary (in `locust_run.log`) by a fraction of
-a second of requests, so `client` may be slightly below `server`. There is no per-query
-breakdown: query `INFORMATION_SCHEMA.QUERY_HISTORY_BY_USER` with the run id as `QUERY_TAG`
-while it is fresh, split by time, since its `RESULT_LIMIT` of 10,000 applies before your
-filter. `QUERY_HISTORY_BY_WAREHOUSE` returns nothing once a created warehouse is dropped.
+a second of requests, so `client` may be slightly below `server`. `result.json` has no
+per-query breakdown; [`report`](#writing-the-run-to-snowflake) writes one. Otherwise query
+`INFORMATION_SCHEMA.QUERY_HISTORY_BY_USER` with the run id as `QUERY_TAG` while it is fresh,
+split by time, since its `RESULT_LIMIT` of 10,000 applies before your filter.
+`QUERY_HISTORY_BY_WAREHOUSE` returns nothing once a created warehouse is dropped.
 
 With `--results-stage`, every file (Locust CSVs and HTML reports, API and Locust logs,
 `workload.json`, `result.json`) is copied to `@<stage>/<run_id>/` when the run ends. The
@@ -116,7 +120,41 @@ which `GET` downloads as a `.part#...` file; ignore it.
 
 When the run exits without the controller's final event, or with a different code, the launcher also prints the tail of the run log.
 
+## Writing the run to Snowflake
+
+With `"report": {"warehouse": "MY_STD_WH", "benchmark_id": "...", "description": "...", "tags": {...}}`
+(only `warehouse` is required), the controller calls `SNOWFLAKE.INTERACTIVE_ANALYTICS.WRITE_BENCHMARK_REPORT`
+three times. The first is a `VALIDATE` `progress` event, the others `REPORT` events:
+
+1. Once connected, before any query is looked up: status `CREATED`, with the inputs as given: the
+   name, tags, description, concurrency, runtime, the planned warehouse, and the queries (SQL text
+   and weights, or each query ID with its weight and no text yet). A run that then fails
+   validation still has this row, and its final call records `ERROR` with the reason.
+2. Once the workload is resolved, before any warehouse is created: status `RUNNING`, with the
+   resolved queries (queries with the same text and context are merged).
+3. After teardown, with the final status: `COMPLETED` (result `SUCCESS` or `FAIL`), `CANCELLED` or
+   `ERROR`, with an `error_code` (`INVALID_CONFIG`, the load outcome such as `BASELINE_FAIL`, or
+   `UNEXPECTED_ERROR`). It also carries one test with the workload and per-query latency and the
+   25 slowest statements.
+
+- `warehouse` must be a standard warehouse: an interactive warehouse cannot call procedures.
+- `benchmark_id` defaults to the run id. The procedure replaces a benchmark's rows on every call,
+  and only its creator may update it, so let the controller be its only writer.
+- If the first call fails (no access to the procedure, or the feature is not enabled on the
+  account), the run stops with exit 30 before looking anything up, and makes no further calls.
+  If the second fails, the run stops with exit 30 before creating a warehouse, and the last call
+  records `ERROR`. If the last call fails, the run records `report_error` in `result.json` and
+  exits 1 unless it had already failed.
+- Per-query rows need each statement's `QUERY_HASH`. Two queries with the same text in different
+  contexts share one, so they only count in the workload row.
+- To test against a copy of the procedure on an account without the feature, set
+  `IWB_REPORT_PROCEDURE` to its fully qualified name.
+
 ## Privileges for the sandbox role
+
+Granting `SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE` to the role the benchmark runs as covers
+`CREATE WAREHOUSE` and the report procedure. That role still needs access to its data, a
+standard warehouse for `report.warehouse`, and permission to create sandboxes. In detail:
 
 - Creating a sandbox: the required privilege is not documented yet; `SYSADMIN` works.
 - SELECT on every table the queries read, plus USAGE on their database/schema. Grant
@@ -128,6 +166,8 @@ When the run exits without the controller's final event, or with a different cod
 - `workload.query_ids`: your own queries (any role), or MONITOR on the user or the query's
   warehouse.
 - `--results-stage`: READ and WRITE on the stage.
+- `report`: USAGE on `SNOWFLAKE.INTERACTIVE_ANALYTICS.WRITE_BENCHMARK_REPORT` (through the
+  `SNOWFLAKE.INTERACTIVE_BENCHMARK_WRITER` application role), and USAGE on `report.warehouse`.
 
 ## Troubleshooting
 
@@ -137,6 +177,7 @@ When the run exits without the controller's final event, or with a different cod
 | `run exited` after a uv or pip 403 or download error | The sandbox cannot reach pypi.org (without `--image` only) |
 | Exit 30, `does not compile for this role` | Missing USAGE or SELECT on an object the query reads |
 | Exit 30, `Query IDs not found` | Not visible to you (not your own, no MONITOR), or older than job retention (14 days by default): set `lookup_warehouse` to search ACCOUNT_USAGE |
+| Exit 30, `Cannot write the benchmark report` ... `Unknown user-defined function` | The role cannot see `WRITE_BENCHMARK_REPORT`: grant it `SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE` |
 | Exit 30, interactive table not attached | `warehouse.existing` does not have that table attached |
 | Exit 40 | The baseline failed (the sandbox cannot drive that many users), or the API never became ready |
 | Exit 20 | More than 1% of queries failed, for example on the 5 s interactive timeout with no `fallback_warehouse` |
@@ -152,8 +193,10 @@ When the run exits without the controller's final event, or with a different cod
   Verified up to 200 users on 16g (baseline p99 2 ms at 200 req/s); the baseline gate fails
   (exit 40) if the sandbox cannot keep up.
 - The launcher's deadline is the controller's worst case (`spcs-images/controller/iwb/budget.py`:
-  two 15-minute warehouse waits, the Locust timeout, setup and teardown) plus 10 minutes for the
-  install, so the controller normally times out and cleans up first. `idle_suspend` is that plus 5
+  two 15-minute warehouse waits, the Locust timeout, setup and teardown, and 20 s per workload
+  query) plus 10 minutes for the install, so the controller normally times out and cleans up
+  first. Each query is warmed three times, so with hundreds of queries most of the run's setup
+  is warm-up. `idle_suspend` is that plus 5
   minutes.
 - If the launcher is stopped or hits its deadline, it sends SIGTERM to the controller and waits
   up to 5 minutes for teardown (which drops a created warehouse) before terminating the sandbox.
