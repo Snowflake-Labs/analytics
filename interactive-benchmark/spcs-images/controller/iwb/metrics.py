@@ -50,8 +50,9 @@ def _fetch(snow: Snow, database: str, warehouse: str, start: int, end: int,
     """
     try:
         rows = snow.rows(
-            f"SELECT {COLUMNS}{DETAIL_COLUMNS if detail else ''}, QUERY_TAG FROM TABLE({ident(database)}.INFORMATION_SCHEMA."
-            "QUERY_HISTORY_BY_WAREHOUSE(WAREHOUSE_NAME => %s, END_TIME_RANGE_START => TO_TIMESTAMP_LTZ(%s), "
+            f"SELECT {COLUMNS}{DETAIL_COLUMNS if detail else ''}, QUERY_TAG "
+            f"FROM TABLE({ident(database)}.INFORMATION_SCHEMA.QUERY_HISTORY_BY_WAREHOUSE("
+            "WAREHOUSE_NAME => %s, END_TIME_RANGE_START => TO_TIMESTAMP_LTZ(%s), "
             "END_TIME_RANGE_END => TO_TIMESTAMP_LTZ(%s), RESULT_LIMIT => %s))",
             (warehouse, start, end, RESULT_LIMIT),
         )

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from fakes import FakeSnow
 from snowflake.connector.errors import ProgrammingError
-from test_controller import QID1, base, run_cli
+from test_controller import QID1, QID2, base, run_cli
 
 from iwb import cli, config, metrics, report, warehouse, workload
 from iwb.config import Context
@@ -14,7 +14,9 @@ def reporter(**overrides):
     cfg = config.parse(base(report={"warehouse": "STD", "benchmark_id": "B1", "tags": {"team": "ui"}}, **overrides))
     queries = [workload.Query("q01", "select 1", 100 / 3, Context("DB", "S"), QID1),
                workload.Query("q02", "select 2", 200 / 3, Context("DB", "S"), "sql")]
-    return report.Reporter(cfg, "RUN", queries, "2026-10-15T00:00:00+00:00")
+    r = report.Reporter(cfg, "RUN", "2026-10-15T00:00:00+00:00")
+    r.queries = queries
+    return r
 
 
 def statement(qid, hash_, ms, status="SUCCESS"):
@@ -35,6 +37,28 @@ class WeightsTest(unittest.TestCase):
 
 
 class ReporterTest(unittest.TestCase):
+    def test_created_report_has_the_inputs_as_given(self) -> None:
+        r = reporter(name="EU", warehouse={"create": {"size": "SMALL", "max_cluster_count": 2}})
+        r.queries = None
+        payload = r.payload("CREATED", None, None)
+        self.assertEqual(("CREATED", "EU", 10, 60, {"team": "ui"}),
+                         (payload["status"], payload["name"], payload["requested_concurrency"],
+                          payload["runtime_seconds"], payload["tags"]))
+        self.assertEqual([("q01", "select 1", "MANUAL", None, 60), ("q02", "select 2", "MANUAL", None, 40)],
+                         [(q["query_id"], q["query_text"], q["source_type"], q["source_reference"],
+                           q["weight_percent"]) for q in payload["queries"]])
+        test = payload["tests"][0]
+        self.assertEqual(("CREATED", "IWB_RUN_IW", "SMALL", 1, 2, True),
+                         (test["status"], test["warehouse_name"], test["warehouse_size"], test["min_cluster_count"],
+                          test["max_cluster_count"], test["warehouse_created_for_run"]))
+
+    def test_created_report_lists_each_query_id_once_without_text(self) -> None:
+        cfg = config.parse(base(report={"warehouse": "STD"}, workload={"query_ids": [QID1, QID1, QID2]}))
+        self.assertEqual([(QID1, "q01", None, "QUERY_HISTORY", QID1, 66.67),
+                          (QID2, "q03", None, "QUERY_HISTORY", QID2, 33.33)],
+                         [(q["query_id"], q["query_name"], q["query_text"], q["source_type"], q["source_reference"],
+                           q["weight_percent"]) for q in report.declared_queries(cfg)])
+
     def test_running_report_has_the_workload_and_a_running_test(self) -> None:
         payload = reporter().payload("RUNNING", None, None)
         self.assertEqual(("B1", "RUNNING", None, 1), (payload["benchmark_id"], payload["status"], payload["result"],
@@ -115,9 +139,11 @@ class CliReportTest(unittest.TestCase):
 
     def test_report_written_at_start_and_after_teardown(self) -> None:
         snow = FakeSnow()
-        code, calls, result, _ = self.run_cli(snow)
+        code, calls, result, events = self.run_cli(snow)
         self.assertEqual(143, code)
-        self.assertEqual(["RUNNING", "CANCELLED"], [c["status"] for c in calls])
+        self.assertEqual(["CREATED", "RUNNING", "CANCELLED"], [c["status"] for c in calls])
+        self.assertEqual(["started", "completed", "started", "completed"],
+                         [e["status"] for e in events if e["step"] == "REPORT"])
         statements = [sql for sql, _ in snow.statements]
         self.assertLess(next(i for i, s in enumerate(statements) if s.startswith("DROP")),
                         max(i for i, s in enumerate(statements) if s.startswith("CALL ")))
@@ -130,10 +156,31 @@ class CliReportTest(unittest.TestCase):
         self.assertEqual([], snow.ran("^CREATE"))
         self.assertEqual(1, len(snow.ran("^CALL ")))
         self.assertIn("Cannot write the benchmark report", result["error"])
-        self.assertEqual(["REPORT", "RUN"], [e["step"] for e in events if e["status"] == "failed"])
+        self.assertEqual(["VALIDATE", "RUN"], [e["step"] for e in events if e["status"] == "failed"])
+
+    def test_a_run_that_fails_validation_is_reported_as_error_with_its_inputs(self) -> None:
+        code, snow, result, events = run_cli(report={"warehouse": "STD"}, workload={"query_ids": [QID1]})
+        calls = [json.loads(params[0]) for sql, params in snow.statements if sql.startswith("CALL ")]
+        self.assertEqual(30, code)
+        self.assertEqual(["CREATED", "ERROR"], [c["status"] for c in calls])
+        self.assertIn("Query IDs not found", calls[1]["error_message"])
+        self.assertEqual([QID1], [q["query_id"] for q in calls[1]["queries"]])
+        self.assertEqual([], snow.ran("^CREATE"))
+        test = calls[1]["tests"][0]
+        self.assertEqual((False, False), (test["warehouse_created_for_run"], test["delete_warehouse_after_run"]))
+        self.assertTrue(test["warehouse_name"].endswith("_IW"))
+        self.assertEqual(["VALIDATE", "RUN"], [e["step"] for e in events if e["status"] == "failed"])
+
+    def test_a_refused_running_write_ends_in_error_before_creating_a_warehouse(self) -> None:
+        snow = FakeSnow().on(r"^CALL ", iter([[], ProgrammingError(msg="lock timeout", errno=625), []]))
+        code, snow, result, _ = run_cli(snow=snow, report={"warehouse": "STD"})
+        calls = [json.loads(params[0]) for sql, params in snow.statements if sql.startswith("CALL ")]
+        self.assertEqual(30, code)
+        self.assertEqual(["CREATED", "RUNNING", "ERROR"], [c["status"] for c in calls])
+        self.assertEqual([], snow.ran("^CREATE"))
 
     def test_final_report_failure_is_in_the_result(self) -> None:
-        snow = FakeSnow().on(r"^CALL ", iter([[], ProgrammingError(msg="lock timeout", errno=625)]))
+        snow = FakeSnow().on(r"^CALL ", iter([[], [], ProgrammingError(msg="lock timeout", errno=625)]))
         code, _, result, events = self.run_cli(snow)
         self.assertEqual(143, code)
         self.assertIn("lock timeout", result["report_error"])

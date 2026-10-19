@@ -122,16 +122,25 @@ When the run exits without the controller's final event, or with a different cod
 
 With `"report": {"warehouse": "MY_STD_WH", "benchmark_id": "...", "description": "...", "tags": {...}}`
 (only `warehouse` is required), the controller calls `SNOWFLAKE.INTERACTIVE_ANALYTICS.WRITE_BENCHMARK_REPORT`
-twice. The first call happens once the workload is resolved and before any warehouse is created:
-status `RUNNING`, with the queries. The second happens after teardown, with the final status:
-`COMPLETED` (result `SUCCESS` or `FAIL`), `CANCELLED` or `ERROR`. That call also carries one test
-with the workload and per-query latency and the 25 slowest statements. Both are `REPORT` events.
+three times. The first is a `VALIDATE` `progress` event, the others `REPORT` events:
+
+1. Once connected, before any query is looked up: status `CREATED`, with the inputs as given: the
+   name, tags, description, concurrency, runtime, the planned warehouse, and the queries (SQL text
+   and weights, or each query ID with its weight and no text yet). A run that then fails
+   validation still has this row, and its final call records `ERROR` with the reason.
+2. Once the workload is resolved, before any warehouse is created: status `RUNNING`, with the
+   resolved queries (query IDs with the same text are merged).
+3. After teardown, with the final status: `COMPLETED` (result `SUCCESS` or `FAIL`), `CANCELLED` or
+   `ERROR`. It also carries one test with the workload and per-query latency and the 25 slowest
+   statements.
 
 - `warehouse` must be a standard warehouse: an interactive warehouse cannot call procedures.
 - `benchmark_id` defaults to the run id. The procedure replaces a benchmark's rows on every call,
   and only its creator may update it, so let the controller be its only writer.
 - If the first call fails (no access to the procedure, or the feature is not enabled on the
-  account), the run stops with exit 30 before creating anything. If the last call fails, the run
+  account), the run stops with exit 30 before looking anything up, and makes no further calls.
+  If the second fails, the run stops with exit 30 before creating a warehouse, and the last call
+  records `ERROR`. If the last call fails, the run
   records `report_error` in `result.json` and exits 1 unless it had already failed.
 - Per-query rows need each statement's `QUERY_HASH`. Two queries with the same text in different
   contexts share one, so they only count in the workload row.

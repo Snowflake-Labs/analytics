@@ -75,6 +75,13 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         # load() reports why the file could not be read.
         cfg = config_module.parse(raw) if raw is not None else config_module.load(config_path)
         snow = connect(connection_name)
+        if cfg.report:
+            # Part of VALIDATE: a refused write is missing access, and nesting a step would make its
+            # failure hide VALIDATE's.
+            first = report.Reporter(cfg, run_id, result["started_at"])
+            first.write(snow, first.payload("CREATED", None, None))
+            reporter = first
+            events.emit("VALIDATE", "progress", benchmark_id=reporter.benchmark_id, report_status="CREATED")
         queries = workload.resolve(cfg, snow)
         tables = workload.discover_tables(snow, queries)
         result["workload"] = [
@@ -82,11 +89,10 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
             for q in queries
         ]
         events.emit("VALIDATE", "completed", queries=len(queries), tables=sorted(tables))
-        if cfg.report:
+        if reporter:
             events.emit("REPORT", "started")
-            first = report.Reporter(cfg, run_id, queries, result["started_at"])
-            first.write(snow, first.payload("RUNNING", None, None))
-            reporter = first
+            reporter.queries = queries
+            reporter.write(snow, reporter.payload("RUNNING", None, None))
             events.emit("REPORT", "completed", benchmark_id=reporter.benchmark_id, report_status="RUNNING")
 
         events.emit("SETUP_WAREHOUSE", "started")
@@ -146,6 +152,7 @@ def run(config_path: str, results_root: str, connection_name: str) -> int:
         if wh is not None:
             result["warehouse"] = {"name": wh.name, "created": wh.created, "tables": sorted(wh.tables)}
         if reporter is not None:
+            events.emit("REPORT", "started")
             try:
                 error_code = None if exit_code == EXIT_OK else (result.get("outcome") or f"EXIT_{exit_code}")
                 reporter.write(snow, reporter.payload(*_report_outcome(exit_code), wh, now_iso(), error_code,
