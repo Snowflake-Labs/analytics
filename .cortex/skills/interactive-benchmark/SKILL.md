@@ -30,7 +30,7 @@ Every step in this skill MUST use the specific tool listed below. Do NOT substit
 
 | Action | Tool | Notes |
 |--------|------|-------|
-| Run shell commands | `bash` | For `deploy.sh`, `status.sh`, `logs.sh`, `teardown.sh`, `resize-wh.sh`, `update-progress.sh`, `cp`, `update.sh`, `upload-queries.sh`. Scripts live in `benchmark/scripts/`. Use `run_in_background=true` for `deploy.sh`. |
+| Run shell commands | `bash` | For `deploy.sh`, `status.sh`, `logs.sh`, `teardown.sh`, `resize-wh.sh`, `update-progress.sh`, `write-report.sh`, `cp`, `update.sh`, `upload-queries.sh`. Scripts live in `benchmark/scripts/`. Use `run_in_background=true` for `deploy.sh`. |
 | Monitor background shell | `bash_output` | To check output of background `deploy.sh` (Step 3.6). |
 | Read files | `read` | For templates, configs, reference docs, logs. |
 | Write / create files | `write` | For `config.env`, `.env`, `benchmark-query.sql`, report HTML, log captures, and initial `progress.json`. |
@@ -126,6 +126,16 @@ where `<action>` is one of: `start`, `complete`, `fail`, `skip`.
 - **On completion:** The script auto-sets top-level status to `"completed"` when step 13 is completed.
 
 Only ONE step should be `"in_progress"` at a time. Each step section below begins with a numbered item **"1. PROGRESS UPDATE (mandatory)"** — run `update-progress.sh` as the first action when entering that step.
+
+---
+
+**Snowsight report:** `<SKILL_DIR>/benchmark/scripts/write-report.sh` writes the benchmark to
+`SNOWFLAKE.INTERACTIVE_ANALYTICS` (the `BENCHMARK_*` views Snowsight reads), one test per load-test
+iteration. Steps 3.4, 3.6, 3.10, 3.12 and 3.13 each call it once, as `created`, `running`,
+`iteration`, then `final`. If the role cannot see `WRITE_BENCHMARK_REPORT`, `created` says the report
+is skipped and the later calls do nothing; tell the user that granting
+`SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE` to the role enables it. Any other failure is an error: show it
+to the user.
 
 ---
 
@@ -297,6 +307,10 @@ This file is the single query executed against the interactive warehouse during 
 
 3. If `benchmark/.env` or `benchmark/spcs/config.env` already exist from a previous run, do NOT reuse them blindly. Use `read` to inspect the existing values, then use `edit` to overwrite anything that changed compared to the current Phase 1/Step 2.1 answers.
 
+4. **Snowsight report (mandatory):** once both files are written, run
+   `cd <SKILL_DIR>/benchmark/scripts && ./write-report.sh <REPORT_DIR> created --description "<P95 latency goal from Phase 1>"`.
+   Add `--warehouse-created` when the skill created the interactive warehouse in Phase 1.
+
 **If any config file creation fails** (template not found, write error, or `grep` finds leftover placeholders after writing): inform the user which config is invalid and why, then jump to Step 3.13 (cleanup) — the benchmark cannot proceed with misconfigured environment files.
 
 **Note on Locust execution model:** As of this skill version, Locust runs in **non-headless mode with `--autostart` inside the container** — no external HTTP calls are needed to trigger the run. There is no `LOCUST_HEADLESS` toggle. See Steps 3.7–3.8 for the execution flow.
@@ -363,7 +377,8 @@ This deploys:
    - Image not found (verify the configured immutable tag is visible in `SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES`)
    - Insufficient privileges (check ROLE)
 5. If a service enters FAILED state, immediately run `./logs.sh`, show the user the output, and stop.
-6. Only proceed to the next step once both services report READY.
+6. Only proceed to the next step once both services report READY. Then run
+   `cd <SKILL_DIR>/benchmark/scripts && ./write-report.sh <REPORT_DIR> running`.
 7. **Display the SPCS topology to the user** (see "SPCS Deployment Topology" section above). This makes it clear how many containers are running and how compute is distributed, so the user can judge whether the infrastructure is appropriately sized for their concurrency target.
 
 ---
@@ -418,6 +433,11 @@ The API sets `QUERY_TAG` to the `SOLUTION_NAME` (benchmark name) on every reques
 
 **Load** `references/server-side-validation.md` (via the `read` tool) for the exact SQL queries, delta interpretation rules, and query profile health metrics.
 
+**Snowsight report (mandatory):** after each `QH_RUN_<N>` table is collected, run
+`cd <SKILL_DIR>/benchmark/scripts && ./write-report.sh <REPORT_DIR> iteration <N> <RUN_START> <RUN_END>`
+with the same epoch-second window. Run it before any escalation changes the warehouse: it records the
+warehouse's current size and cluster counts with the iteration's numbers.
+
 **Cluster usage detection:** The aggregate server-side query includes `COUNT(DISTINCT CLUSTER_NUMBER) AS DISTINCT_CLUSTERS_USED` and `MAX(CLUSTER_NUMBER) AS PEAK_CLUSTER_NUMBER`. These tell you exactly how many clusters actually served queries during the load test, even if `MAX_CLUSTER_COUNT` was set higher. Capture both values — they populate the `{{CLUSTERS_ACTUAL}}` placeholder in the report (format: "X of Y" where X is `DISTINCT_CLUSTERS_USED` and Y is the configured `MAX_CLUSTER_COUNT`). Also include the cluster count in each row of the `{{ITERATION_HISTORY}}` table so the reader can see how cluster usage changed across escalation steps.
 
 ---
@@ -460,6 +480,8 @@ Each time the load test runs (Step 3.8), capture the full Locust output (via `ba
 3. Use `write` to save the filled-in report to `<SKILL_DIR>/benchmark/reports/<SOLUTION_NAME>/benchmark-report.html`
 4. Use the `grep` tool to verify no `{{` placeholders remain: `grep '{{' <output-file>` must return zero matches
 5. Use `open_browser` to open the report for the user
+6. **Snowsight report (mandatory):** run
+   `cd <SKILL_DIR>/benchmark/scripts && ./write-report.sh <REPORT_DIR> final COMPLETED`
 
 ---
 
@@ -467,7 +489,10 @@ Each time the load test runs (Step 3.8), capture the full Locust output (via `ba
 
 1. **PROGRESS UPDATE (mandatory):** Run `bash <SKILL_DIR>/benchmark/scripts/update-progress.sh <REPORT_DIR> 12 complete && <SKILL_DIR>/benchmark/scripts/update-progress.sh <REPORT_DIR> 13 start`.
 2. **End-of-step PROGRESS UPDATE (mandatory):** After cleanup completes, run `update-progress.sh <REPORT_DIR> 13 complete` (this auto-sets top-level status to `"completed"`).
-3. **Load** `references/cleanup.md` (via the `read` tool) for the full cleanup procedure.
+3. **Snowsight report:** if you reached this step because the benchmark could not continue (an earlier step jumped here), first run
+   `cd <SKILL_DIR>/benchmark/scripts && ./write-report.sh <REPORT_DIR> final ERROR --message "<why it stopped>"`,
+   or `final CANCELLED` if the user stopped it. Skip this when `created` has not run yet.
+4. **Load** `references/cleanup.md` (via the `read` tool) for the full cleanup procedure.
 
 **Summary:** Present the user with a table of all created resources (benchmark-created warehouses, schema, tables, SPCS database/schema, compute pools, and services). The shared System Registry is not created or removed by a benchmark run. Use `ask_user_question` with three options: (1) Full cleanup, (2) SPCS only, (3) Keep everything (state that pools and minimum clusters keep billing). For full cleanup, run `./teardown.sh` then drop the benchmark-created schemas/warehouses/database via SQL. Never drop a user-supplied warehouse — restore its original settings instead. For "keep everything", save `SPCS_DEPLOYED=true` to `.env` so future runs skip redeployment.
 
@@ -500,6 +525,7 @@ Request body: `{"query_id": "<id>"}`. Response includes `elapsed_ms`, `row_count
 
 - `benchmark/reports/<SOLUTION_NAME>/benchmark-report.html` — HTML report with executive summary, percentile charts, bottleneck diagnosis, escalation path, and optimization recommendations
 - `benchmark/reports/<SOLUTION_NAME>/locust-run-N.txt` — Raw Locust logs for each load test iteration (one per escalation step)
+- The benchmark in `SNOWFLAKE.INTERACTIVE_ANALYTICS` (`benchmark_id` = `<SOLUTION_NAME>`), for Snowsight, unless the report was skipped
 - Snowflake resources (interactive warehouse, tables, SPCS services) — listed in Step 3.13 for cleanup or reuse
 
 ## Checklist and Troubleshooting
