@@ -24,6 +24,8 @@ from iwb.workload import Query, declared, use_warehouse
 PROCEDURE = os.environ.get("IWB_REPORT_PROCEDURE", "SNOWFLAKE.INTERACTIVE_ANALYTICS.WRITE_BENCHMARK_REPORT")
 REPORT_VERSION = 1
 MAX_EXECUTIONS = 25  # the procedure's per-test limit; the slowest are kept
+# What a role without the writer application role gets for the procedure or its schema.
+NOT_FOUND, UNKNOWN_FUNCTION = 2003, 2141
 
 
 def weights_percent(weights: list[float]) -> list[float]:
@@ -180,4 +182,6 @@ class Reporter:
             use_warehouse(snow, self.cfg.report.warehouse)
             snow.execute(f"CALL {PROCEDURE}(PARSE_JSON(%s))", (json.dumps(payload, default=str),))
         except ProgrammingError as exc:
-            raise ConfigError(f"Cannot write the benchmark report with {PROCEDURE}: {exc.msg}") from exc
+            hint = (" Grant SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE to this role."
+                    if exc.errno in (NOT_FOUND, UNKNOWN_FUNCTION) else "")
+            raise ConfigError(f"Cannot write the benchmark report with {PROCEDURE}: {exc.msg}{hint}") from exc

@@ -18,7 +18,10 @@ Benchmarks any user-provided SQL query against a Snowflake Interactive Warehouse
 - A Snowflake connection configured in `~/.snowflake/connections.toml`
 - Role with privileges to create the benchmark database/schema/stage,
   warehouses, compute pools, services, and public service endpoints; use the
-  deployment warehouse; and read the approved System Registry image
+  deployment warehouse; and read the approved System Registry image. On
+  accounts that have `SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE`, granting it to the
+  role covers the account privileges (`deploy.sh` checks and says so); the role
+  still needs access to the benchmark warehouses and source data
 - Ability to use Snowpark Container Services (SPCS)
 
 ## Tool Usage

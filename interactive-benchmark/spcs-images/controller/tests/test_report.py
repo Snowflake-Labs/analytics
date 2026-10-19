@@ -158,12 +158,15 @@ class CliReportTest(unittest.TestCase):
         self.assertEqual(result["run_id"], result["benchmark_id"])
 
     def test_report_refused_at_start_fails_before_creating_a_warehouse_and_is_not_retried(self) -> None:
-        snow = FakeSnow().on(r"^CALL ", ProgrammingError(msg="Unknown function", errno=2140))
+        refused = ProgrammingError(msg="Unknown user-defined function SNOWFLAKE.INTERACTIVE_ANALYTICS."
+                                       "WRITE_BENCHMARK_REPORT.", errno=2141)
+        snow = FakeSnow().on(r"^CALL ", refused)
         code, _, result, events = self.run_cli(snow)
         self.assertEqual(30, code)
         self.assertEqual([], snow.ran("^CREATE"))
         self.assertEqual(1, len(snow.ran("^CALL ")))
         self.assertIn("Cannot write the benchmark report", result["error"])
+        self.assertIn("Grant SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE", result["error"])
         self.assertEqual(["VALIDATE", "RUN"], [e["step"] for e in events if e["status"] == "failed"])
 
     def test_a_run_that_fails_validation_is_reported_as_error_with_its_inputs(self) -> None:
@@ -192,6 +195,7 @@ class CliReportTest(unittest.TestCase):
         code, _, result, events = self.run_cli(snow)
         self.assertEqual(143, code)
         self.assertIn("lock timeout", result["report_error"])
+        self.assertNotIn("SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE", result["report_error"])
         self.assertEqual(["completed", "failed"], [e["status"] for e in events
                                                    if e["step"] == "REPORT" and e["status"] != "started"])
 

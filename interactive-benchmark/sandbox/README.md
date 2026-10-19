@@ -176,6 +176,7 @@ standard warehouse for `report.warehouse`, and permission to create sandboxes. I
 | `run exited` after a uv or pip 403 or download error | The sandbox cannot reach pypi.org (without `--image` only) |
 | Exit 30, `does not compile for this role` | Missing USAGE or SELECT on an object the query reads |
 | Exit 30, `Query IDs not found` | Not visible to you (not your own, no MONITOR), or older than job retention (14 days by default): set `lookup_warehouse` to search ACCOUNT_USAGE |
+| Exit 30, `Cannot write the benchmark report` ... `Unknown user-defined function` | The role cannot see `WRITE_BENCHMARK_REPORT`: grant it `SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE` |
 | Exit 30, interactive table not attached | `warehouse.existing` does not have that table attached |
 | Exit 40 | The baseline failed (the sandbox cannot drive that many users), or the API never became ready |
 | Exit 20 | More than 1% of queries failed, for example on the 5 s interactive timeout with no `fallback_warehouse` |

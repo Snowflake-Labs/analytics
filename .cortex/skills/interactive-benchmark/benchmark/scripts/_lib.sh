@@ -154,10 +154,38 @@ validate_unquoted_identifier() {
   fi
 }
 
+BENCHMARK_SYSTEM_ROLE=SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE
+
+# Accounts with Interactive Analytics have a Snowflake-owned role holding the account privileges
+# deploy.sh needs. Recommend it when it exists but ROLE lacks it; ROLE's own privileges still work.
+check_benchmark_system_role() {
+  local rows granted
+  rows="$(snow sql --connection "$CONNECTION" --role "$ROLE" --silent --format json -q \
+    "SHOW ROLES LIKE '$BENCHMARK_SYSTEM_ROLE'")"
+  if ! python3 -c 'import json, sys; sys.exit(0 if json.loads(sys.argv[1]) else 1)' "$rows"; then
+    return 0
+  fi
+  granted="$(snow sql --connection "$CONNECTION" --role "$ROLE" --silent --format json -q \
+    "SELECT IS_ROLE_IN_SESSION('$BENCHMARK_SYSTEM_ROLE') AS GRANTED")"
+  if python3 -c 'import json, sys; sys.exit(0 if json.loads(sys.argv[1])[0]["GRANTED"] else 1)' "$granted"; then
+    echo "Role $ROLE has $BENCHMARK_SYSTEM_ROLE."
+    return 0
+  fi
+  cat >&2 <<EOF
+Note: this account has $BENCHMARK_SYSTEM_ROLE (CREATE DATABASE, CREATE WAREHOUSE,
+CREATE COMPUTE POOL and BIND SERVICE ENDPOINT), but $ROLE does not. Continuing with
+$ROLE's own privileges; to rely on the benchmark role instead, ask an administrator to run:
+
+USE ROLE ACCOUNTADMIN;
+GRANT ROLE $BENCHMARK_SYSTEM_ROLE TO ROLE $ROLE;
+EOF
+}
+
 print_access_remediation() {
   cat >&2 <<EOF
 Ask an administrator to grant the service-owner role access to the benchmark
-warehouses and source data, then rerun deploy.sh:
+warehouses and source data ($BENCHMARK_SYSTEM_ROLE does not include data access),
+then rerun deploy.sh:
 
 USE ROLE ACCOUNTADMIN;
 GRANT USAGE ON WAREHOUSE $INTERACTIVE_WAREHOUSE TO ROLE $API_ROLE;
@@ -230,6 +258,7 @@ EOF
     validate_unquoted_identifier "$name" "${!name}" || return 1
   done
 
+  check_benchmark_system_role || return 1
   probe_warehouse_access "interactive" "$INTERACTIVE_WAREHOUSE" || return 1
   probe_warehouse_access "fallback" "$API_WAREHOUSE" || return 1
   probe_query_access || return 1
