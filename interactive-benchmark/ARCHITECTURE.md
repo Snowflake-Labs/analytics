@@ -107,7 +107,7 @@ rebuilding images.
 5. Print the public ingress URLs.
 
 Both services use the immutable approved image
-`interactive-analytics/interactive-benchmark:0.2.0` from
+`interactive-analytics/interactive-benchmark:0.3.0` from
 `SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES`; their specs select
 `BENCHMARK_ROLE=api` or `BENCHMARK_ROLE=locust`.
 

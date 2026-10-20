@@ -12,8 +12,12 @@ case "${BENCHMARK_ROLE:-}" in
   locust)
     exec "$LOCUST_ENTRYPOINT" "$@"
     ;;
+  controller)
+    cd /app/controller
+    exec /opt/venvs/controller/bin/python -m iwb "$@"
+    ;;
   *)
-    echo "[entrypoint] ERROR: BENCHMARK_ROLE must be 'api' or 'locust'." >&2
+    echo "[entrypoint] ERROR: BENCHMARK_ROLE must be 'api', 'locust' or 'controller'." >&2
     exit 64
     ;;
 esac

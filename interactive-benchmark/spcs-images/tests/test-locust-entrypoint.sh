@@ -36,6 +36,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODE = os.environ["STUB_MODE"]
+HITS = open(os.environ["STUB_HITS_FILE"], "a", buffering=1)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -53,13 +54,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/ready":
             self.reply(200, {"status": "ready"})
-        elif self.path == "/api/queries":
-            self.reply(200, [] if MODE == "no_queries" else ["benchmark-query"])
+        elif self.path == "/api/workload" and MODE == "legacy":
+            self.reply(404, {"detail": "Not Found"})
+        elif self.path == "/api/queries" and MODE == "legacy":
+            self.reply(200, ["heavy", "light"])
+        elif self.path == "/api/workload":
+            self.reply(200, [] if MODE == "no_queries" else [
+                {"id": "heavy", "weight": 90},
+                {"id": "light", "weight": 10},
+            ])
         else:
             self.reply(404, {})
 
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        if self.path == "/api/run/interactive":
+            HITS.write(body.get("query_id", "?") + "\n")
         if self.path == "/api/run/interactive" and MODE == "fail_interactive":
             self.reply(500, {"error": "stub failure"})
         else:
@@ -76,7 +86,8 @@ PY
 run_entrypoint() {
   local mode="$1" port web_port
   shift
-  STUB_MODE="$mode" setsid "$VENV/bin/python" "$TMP_DIR/stub.py" >"$TMP_DIR/port" &
+  : >"$TMP_DIR/hits"
+  STUB_MODE="$mode" STUB_HITS_FILE="$TMP_DIR/hits" setsid "$VENV/bin/python" "$TMP_DIR/stub.py" >"$TMP_DIR/port" &
   STUB_PID=$!
   for _ in $(seq 50); do [[ -s "$TMP_DIR/port" ]] && break; sleep 0.1; done
   port="$(cat "$TMP_DIR/port")"
@@ -116,6 +127,24 @@ grep -q "\[benchmark\] VERDICT: PASS" "$TMP_DIR/out" || fail "benchmark did not 
 grep -q "benchmark=COMPLETED" "$TMP_DIR/out" || fail "heartbeat status wrong"
 [[ -f "$TMP_DIR/results/locust_stats_stats.csv" ]] || fail "results not written to BENCHMARK_RESULTS_DIR"
 
+# 1b. Queries are chosen by weight (90/10). 20 users give ~80 requests, so a
+#     heavy share under 75% is a >3 sigma event if weights are applied, and
+#     light is missing with probability 0.9^80 < 0.03%.
+run_entrypoint ok LOCUST_USERS=20 LOCUST_SPAWN=20
+expect_finished weights
+heavy="$(grep -c '^heavy$' "$TMP_DIR/hits" || true)"
+light="$(grep -c '^light$' "$TMP_DIR/hits" || true)"
+total=$((heavy + light))
+(( total >= 50 )) || fail "too few interactive requests to check weights: $total"
+(( heavy * 100 >= total * 75 )) || fail "weights not applied: heavy=$heavy light=$light"
+(( light > 0 )) || fail "light query never chosen"
+
+# 1c. An API older than /api/workload (a rolling update): equal weights from /api/queries.
+run_entrypoint legacy LOCUST_USERS=4 LOCUST_SPAWN=4
+expect_finished legacy
+grep -q "\[benchmark\] VERDICT: PASS" "$TMP_DIR/out" || fail "legacy API did not pass"
+grep -q '^heavy$' "$TMP_DIR/hits" && grep -q '^light$' "$TMP_DIR/hits" || fail "legacy API queries not all run"
+
 # 2. Every interactive request fails: verdict FAIL, results still printed.
 run_entrypoint fail_interactive
 expect_finished fail_interactive
@@ -136,5 +165,10 @@ grep -q "benchmark=FAILED" "$TMP_DIR/out" || fail "heartbeat status not FAILED"
 run_entrypoint ok BENCHMARK_MAX_FAILURE_PCT=1%
 grep -q "BENCHMARK_MAX_FAILURE_PCT must be a number" "$TMP_DIR/out" || fail "malformed threshold accepted"
 ! grep -q "PHASE 1" "$TMP_DIR/out" || fail "ran with a malformed threshold"
+
+# 5. BENCHMARK_EXIT_AFTER_RUN=1 (controller mode): exits with the verdict instead of looping.
+run_entrypoint ok BENCHMARK_EXIT_AFTER_RUN=1
+grep -q "\[benchmark\] VERDICT: PASS" "$TMP_DIR/out" || fail "exit-after-run did not finish the benchmark"
+! grep -q "=== HEARTBEAT" "$TMP_DIR/out" || fail "exit-after-run still entered the heartbeat loop"
 
 echo "Locust entrypoint contract passed."

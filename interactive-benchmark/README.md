@@ -78,6 +78,14 @@ interactive-benchmark/
 - **`scripts/`** — Shell scripts for SPCS deployment and operational tasks (status, logs, resize, teardown). They read configuration from `spcs/config.env`.
 - **`spcs/`** — SPCS deployment config (`config.env`) and service specs (`specs/api.yaml`, `specs/locust.yaml`).
 
+## Running in a Cortex Sandbox (no SPCS)
+
+To run a single benchmark from a JSON config, without the skill or any SPCS deployment, use
+the Cortex Sandbox launcher: one command creates a sandbox as your role, creates the
+interactive warehouse if asked, runs the baseline and the load test, reports client and
+server-side latency, and removes everything it created. Requires Cortex Sandboxes (private
+preview) on the account. See [sandbox/README.md](sandbox/README.md).
+
 ## Running on SPCS (manual)
 
 The skill handles SPCS deployment automatically. The instructions below are for those who want to understand how the skill works behind the scenes or run the infrastructure manually without CoCo.
@@ -97,7 +105,7 @@ The benchmark runs on [Snowpark Container Services](https://docs.snowflake.com/e
 ### Approved Container Image
 
 Both services use
-`SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES/interactive-analytics/interactive-benchmark:0.2.0`;
+`SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES/interactive-analytics/interactive-benchmark:0.3.0`;
 `BENCHMARK_ROLE=api|locust` selects the runtime. Benchmark users do not build
 images or need `CREATE IMAGE REPOSITORY`.
 
