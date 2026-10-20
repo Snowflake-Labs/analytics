@@ -91,14 +91,13 @@ All object names derive from the `SOLUTION_NAME` you choose (default: `IWB_<YYYY
 | Standard warehouse (fallback) | `<SOLUTION_NAME>_STD_WH` |
 | API compute pool | `<SOLUTION_NAME>_API_POOL` |
 | Locust compute pool | `<SOLUTION_NAME>_LOCUST_POOL` |
-
 | API service | `BENCHMARK_API` |
 | Locust service | `BENCHMARK_LOCUST` |
 | Queries stage | `BENCHMARK_QUERIES` |
 
 ## Benchmark reports
 
-Each run stores artifacts in `.cortex/skills/interactive-benchmark/benchmark/reports/<SOLUTION_NAME>/`:
+Each run stores artifacts in `~/.snowflake/interactive-benchmark/reports/<SOLUTION_NAME>/`:
 
 - `progress.json` -- step-by-step progress tracker (13 steps)
 - `benchmark-report.html` -- the final HTML report
@@ -106,10 +105,11 @@ Each run stores artifacts in `.cortex/skills/interactive-benchmark/benchmark/rep
 
 ## Manual script reference
 
-The scripts in `benchmark/scripts/` can be run directly for operational tasks. They all read configuration from `benchmark/spcs/config.env`.
+The scripts in `benchmark/scripts/` (inside the skill installation directory) can be run directly for operational tasks. They all read configuration from `benchmark/spcs/config.env`.
 
 ```bash
-SCRIPTS=.cortex/skills/interactive-benchmark/benchmark/scripts
+# Set SCRIPTS to the benchmark scripts directory inside the CoCo CLI skill installation
+SCRIPTS=<COCO_SKILL_DIR>/interactive-benchmark/benchmark/scripts
 
 # Check service status
 $SCRIPTS/status.sh

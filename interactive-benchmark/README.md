@@ -110,7 +110,8 @@ images or need `CREATE IMAGE REPOSITORY`.
 ### Deploy
 
 ```bash
-.cortex/skills/interactive-benchmark/benchmark/scripts/deploy.sh
+# Set SCRIPTS to the benchmark scripts directory inside the CoCo CLI skill installation
+<COCO_SKILL_DIR>/interactive-benchmark/benchmark/scripts/deploy.sh
 ```
 
 This will create the database/schema, two compute pools (one for the API, one for Locust), upload benchmark queries to a Snowflake stage, create the services (using pre-built images), and print the public ingress URLs once ready.
@@ -118,7 +119,8 @@ This will create the database/schema, two compute pools (one for the API, one fo
 ### Common operations
 
 ```bash
-SCRIPTS=.cortex/skills/interactive-benchmark/benchmark/scripts
+# Set SCRIPTS to the benchmark scripts directory inside the CoCo CLI skill installation
+SCRIPTS=<COCO_SKILL_DIR>/interactive-benchmark/benchmark/scripts
 
 $SCRIPTS/status.sh              # show state + endpoints for both services
 $SCRIPTS/status.sh --urls-only  # just the ingress URLs
