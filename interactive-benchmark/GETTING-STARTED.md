@@ -4,25 +4,20 @@ This skill benchmarks any SQL query against a Snowflake Interactive Warehouse un
 
 For an overview presentation see the [slide deck](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/slide-deck/index.html), and for an example of the generated output see the [sample report](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/sample-report/benchmark-report.html).
 
-## 1. Clone the repo
+## 1. Install prerequisites
 
-```bash
-git clone https://github.com/Snowflake-Labs/interactive-analytics.git
-cd interactive-analytics
-```
+Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18**, the `interactive-benchmark` skill is available natively — there is no need to clone this repository. Just open CoCo CLI and invoke the skill directly (see step 4 below). (Desktop support coming soon.)
 
-## 2. Install prerequisites
-
-### For running the benchmark (via the CoCo skill)
+### Required tools
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| **Cortex Code** (Desktop or CLI) | Runs the skill | [Docs](https://docs.snowflake.com/en/user-guide/ui-snowsight/cortex-code) |
+| **Cortex Code CLI** **v1.2.18+** | Runs the skill (ships built-in; Desktop support coming soon) | [Docs](https://docs.snowflake.com/en/user-guide/ui-snowsight/cortex-code) |
 | **`snow` CLI** | Snowflake CLI for SPCS operations | `pip install snowflake-cli` or `brew install snowflake-cli` |
 | **Python 3** | Validates image metadata returned by Snowflake | [python.org](https://www.python.org/downloads/) |
 | **`envsubst`** | Renders YAML specs from templates | Comes with `gettext` (`brew install gettext` on macOS) |
 
-## 3. Configure a Snowflake connection
+## 2. Configure a Snowflake connection
 
 Make sure you have a connection in `~/.snowflake/connections.toml` with a role
 that can create the benchmark database/schema/stage, warehouses, compute pools,
@@ -47,7 +42,7 @@ Verify the connection:
 snow connection test -c myconn
 ```
 
-## 4. Verify the approved image
+## 3. Verify the approved image
 
 The benchmark uses one immutable approved image from
 `SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES` for both API and Locust roles.
@@ -56,11 +51,7 @@ pools. It also verifies that the service-owner role can use both warehouses
 and execute the benchmark queries against the interactive schema. No Docker setup
 is required.
 
-## 5. Open the project in Cortex Code
-
-Open the cloned `interactive-analytics` folder in Cortex Code Desktop, or `cd` into it in Cortex Code CLI. The skill is auto-discovered from `.cortex/skills/interactive-benchmark/SKILL.md`.
-
-## 6. Run the benchmark
+## 4. Run the benchmark
 
 In the Cortex Code chat panel, type something like:
 
@@ -100,14 +91,13 @@ All object names derive from the `SOLUTION_NAME` you choose (default: `IWB_<YYYY
 | Standard warehouse (fallback) | `<SOLUTION_NAME>_STD_WH` |
 | API compute pool | `<SOLUTION_NAME>_API_POOL` |
 | Locust compute pool | `<SOLUTION_NAME>_LOCUST_POOL` |
-
 | API service | `BENCHMARK_API` |
 | Locust service | `BENCHMARK_LOCUST` |
 | Queries stage | `BENCHMARK_QUERIES` |
 
 ## Benchmark reports
 
-Each run stores artifacts in `.cortex/skills/interactive-benchmark/benchmark/reports/<SOLUTION_NAME>/`:
+Each run stores artifacts in `~/.snowflake/interactive-benchmark/reports/<SOLUTION_NAME>/`:
 
 - `progress.json` -- step-by-step progress tracker (13 steps)
 - `benchmark-report.html` -- the final HTML report
@@ -115,10 +105,11 @@ Each run stores artifacts in `.cortex/skills/interactive-benchmark/benchmark/rep
 
 ## Manual script reference
 
-The scripts in `benchmark/scripts/` can be run directly for operational tasks. They all read configuration from `benchmark/spcs/config.env`.
+The scripts in `benchmark/scripts/` (inside the skill installation directory) can be run directly for operational tasks. They all read configuration from `benchmark/spcs/config.env`.
 
 ```bash
-SCRIPTS=.cortex/skills/interactive-benchmark/benchmark/scripts
+# Set SCRIPTS to the benchmark scripts directory inside the CoCo CLI skill installation
+SCRIPTS=<COCO_SKILL_DIR>/interactive-benchmark/benchmark/scripts
 
 # Check service status
 $SCRIPTS/status.sh
