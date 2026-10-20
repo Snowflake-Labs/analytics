@@ -132,6 +132,41 @@ class ReporterTest(unittest.TestCase):
         self.assertEqual({"benchmark_id": "B1"}, json.loads(params[0]))
 
 
+class ReportNameTest(unittest.TestCase):
+    def _reporter(self, report_dict, **overrides):
+        cfg = config.parse(base(report=report_dict, **overrides))
+        return report.Reporter(cfg, "RUN", "2026-10-15T00:00:00+00:00")
+
+    def test_report_name_overrides_top_level_name(self) -> None:
+        r = self._reporter({"warehouse": "STD", "name": "My benchmark"}, name="IWB_abc123")
+        self.assertEqual("My benchmark", r.payload("CREATED")["name"])
+
+    def test_top_level_name_used_when_report_name_absent(self) -> None:
+        r = self._reporter({"warehouse": "STD"}, name="EU")
+        self.assertEqual("EU", r.payload("CREATED")["name"])
+
+    def test_top_level_name_used_when_report_name_is_none(self) -> None:
+        r = self._reporter({"warehouse": "STD"}, name="EU")
+        self.assertIsNone(r.cfg.report.name)
+        self.assertEqual("EU", r.payload("CREATED")["name"])
+
+    def test_schema_accepts_report_name(self) -> None:
+        cfg = config.parse(base(report={"warehouse": "STD", "name": "User run name"}))
+        self.assertEqual("User run name", cfg.report.name)
+
+    def test_schema_rejects_empty_report_name(self) -> None:
+        with self.assertRaises(config.ConfigError):
+            config.parse(base(report={"warehouse": "STD", "name": ""}))
+
+    def test_tags_accepts_array(self) -> None:
+        cfg = config.parse(base(report={"warehouse": "STD", "tags": ["nightly", "fast"]}))
+        self.assertEqual(["nightly", "fast"], cfg.report.tags)
+
+    def test_tags_accepts_object(self) -> None:
+        cfg = config.parse(base(report={"warehouse": "STD", "tags": {"team": "ui"}}))
+        self.assertEqual({"team": "ui"}, cfg.report.tags)
+
+
 class DetailColumnsTest(unittest.TestCase):
     def test_report_columns_are_read_only_for_a_report(self) -> None:
         for detail in (False, True):

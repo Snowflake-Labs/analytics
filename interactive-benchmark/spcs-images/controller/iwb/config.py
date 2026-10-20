@@ -50,10 +50,11 @@ class NewWarehouse:
 @dataclass(frozen=True)
 class Report:
     warehouse: str
+    name: str | None = None
     benchmark_id: str | None = None
     parent_benchmark_id: str | None = None
     description: str | None = None
-    tags: dict | None = None
+    tags: dict | list[str] | None = None
 
 
 @dataclass(frozen=True)

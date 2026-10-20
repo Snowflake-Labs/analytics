@@ -189,6 +189,11 @@
           "$ref": "#/$defs/warehouse_name",
           "description": "Standard warehouse for the report writes: an interactive warehouse cannot call procedures."
         },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Display name stored in the report; defaults to the optional top-level run name."
+        },
         "benchmark_id": {
           "type": "string",
           "minLength": 1,
@@ -205,7 +210,17 @@
           "type": "string"
         },
         "tags": {
-          "type": "object"
+          "oneOf": [
+            {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "List of report tags."
+            },
+            {
+              "type": "object",
+              "description": "Key/value report tags."
+            }
+          ]
         }
       },
       "description": "Write the run to SNOWFLAKE.INTERACTIVE_ANALYTICS (the BENCHMARK_* views) with WRITE_BENCHMARK_REPORT; see the sandbox README."
