@@ -2,7 +2,9 @@
 
 A [Cortex Code (CoCo)](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code) skill that benchmarks Snowflake **Interactive Warehouse** performance under concurrent load using any user-provided SQL query. The skill automates the entire workflow — from verifying that your tables and queries are suitable for interactive warehouses to deploying the benchmark infrastructure and generating reports — through conversational prompts. Zero-copy is already supported: the skill can benchmark your existing tables directly on an interactive warehouse without duplicating data.
 
-To use it, open this project in Cortex Code and describe what you want to benchmark. See [GETTING-STARTED.md](GETTING-STARTED.md) for a step-by-step walkthrough, the [slide deck](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/slide-deck/index.html) for an overview presentation, and the [sample report](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/sample-report/benchmark-report.html) for an example of the generated benchmark output.
+Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18**, this skill is available natively — no need to clone this repository. Just open CoCo CLI and invoke `$interactive-benchmark` directly. (Desktop support coming soon.)
+
+See [GETTING-STARTED.md](GETTING-STARTED.md) for a step-by-step walkthrough, the [slide deck](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/slide-deck/index.html) for an overview presentation, and the [sample report](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/sample-report/benchmark-report.html) for an example of the generated benchmark output.
 
 ## Sample Prompt
 
@@ -34,12 +36,25 @@ concurrent users
 
 Adapt the database name, schema, scale factor, and connection name to match your own environment.
 
-## Repository Structure
+## Benchmark Reports
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed description of the SPCS topology, directory layout, naming conventions, and deployment internals.
+When running the skill via CoCo CLI, benchmark reports and artifacts are saved to:
 
 ```
-.cortex/skills/interactive-benchmark/
+~/.snowflake/interactive-benchmark/reports/<SOLUTION_NAME>/
+├── benchmark-report.html   # Final HTML report
+├── progress.json           # Step-by-step progress tracker
+├── locust-run-1.txt        # Raw Locust output for iteration 1
+├── locust-run-2.txt        # (if escalation triggered re-runs)
+└── ...                     # Additional runs as needed
+```
+
+## Skill Structure
+
+The skill is installed as part of CoCo CLI. The tree below shows the layout relative to the CoCo installation directory. See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed description of the SPCS topology, naming conventions, and deployment internals.
+
+```
+interactive-benchmark/
 ├── SKILL.md              # Skill definition (loaded by CoCo)
 ├── references/           # Supporting docs loaded on-demand by the skill
 │   ├── benchmark-execution.md
@@ -54,27 +69,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed description of the SPCS to
 │   └── benchmark-report.html.template
 └── benchmark/
     ├── .env.template     # Project-level env config template
-    ├── test/             # SQL query files to benchmark (place your .sql files here)
-    ├── reports/          # Generated benchmark reports (one subfolder per run)
-    │   └── <SOLUTION_NAME>/
-    │       ├── benchmark-report.html
-    │       ├── progress.json
-    │       ├── locust-run-1.txt
-    │       ├── locust-run-2.txt   (if escalation triggered re-runs)
-    │       └── ...               (additional runs as needed)
+    ├── test/             # SQL query files to benchmark
     ├── scripts/          # Deployment and management shell scripts
     └── spcs/             # SPCS deployment config and service specs
-
-interactive-benchmark/spcs-images/
-├── Dockerfile            # Unified production image for both roles
-├── role-entrypoint.sh    # Dispatches BENCHMARK_ROLE=api|locust
-├── api/                  # Benchmark API source and entrypoint
-└── locust/               # Locust source and entrypoint
 ```
 
 - **`test/`** — Place `.sql` files here — each containing a single query. During deployment, these files are uploaded to a Snowflake internal stage and mounted into the API container. Queries can be updated without rebuilding images.
-- **`reports/`** — Generated benchmark reports. Each run creates a subfolder (e.g. `reports/IWB_202608271430/`) containing the final HTML report and Locust execution logs.
-- **`spcs/`** — SPCS deployment config (`config.env`) and service specs (`specs/api.yaml`, `specs/locust.yaml`). Dockerfiles and app source code live separately in `interactive-benchmark/spcs-images/`.
+- **`scripts/`** — Shell scripts for SPCS deployment and operational tasks (status, logs, resize, teardown). They read configuration from `spcs/config.env`.
+- **`spcs/`** — SPCS deployment config (`config.env`) and service specs (`specs/api.yaml`, `specs/locust.yaml`).
 
 ## Running on SPCS (manual)
 
