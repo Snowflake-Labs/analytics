@@ -25,7 +25,7 @@ ORDER BY N_NAME NULLS LAST;
 
 and I want understand how it can benefit from interactive analytics. The query is
 used in Dashboard along with other queries. The query must answer in less than a
-second. The database with the table used by the query is DM_TESTTPCH_DB and
+second. The database with the table used by the query is DM_TESTTPCH_BENCH_DB and
 the schema is TPCH_SF100. The filter on order date will be different and also it
 might happen that users filter data for specific nation or region or even market.
 How can I make sure that I can obtain the performance I need? 
