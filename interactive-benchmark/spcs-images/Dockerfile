@@ -1,7 +1,7 @@
 ARG BASE_IMAGE=python:3.12-slim
 FROM ${BASE_IMAGE}
 
-ARG SOURCE_URL=https://github.com/Snowflake-Labs/interactive-analytics
+ARG SOURCE_URL=https://github.com/Snowflake-Labs/analytics
 ARG SOURCE_REVISION=local
 ARG OWNER_EMAIL=local-build
 ARG OWNER_SLACK=local-build

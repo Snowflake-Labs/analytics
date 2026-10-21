@@ -4,7 +4,7 @@ This skill benchmarks any SQL query against a Snowflake Interactive Warehouse un
 
 To run one benchmark from a JSON config without the skill or SPCS, see [sandbox/README.md](sandbox/README.md) (Cortex Sandbox).
 
-For an overview presentation see the [slide deck](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/slide-deck/index.html), and for an example of the generated output see the [sample report](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/sample-report/benchmark-report.html).
+For an overview presentation see the [slide deck](https://snowflake-labs.github.io/analytics/interactive-benchmark/slide-deck/index.html), and for an example of the generated output see the [sample report](https://snowflake-labs.github.io/analytics/interactive-benchmark/sample-report/benchmark-report.html).
 
 ## 1. Install prerequisites
 
