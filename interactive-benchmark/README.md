@@ -4,7 +4,7 @@ A [Cortex Code (CoCo)](https://docs.snowflake.com/en/user-guide/cortex-code/cort
 
 Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18**, this skill is available natively — no need to clone this repository. Just open CoCo CLI and invoke `$interactive-benchmark` directly. (Desktop support coming soon.)
 
-See [GETTING-STARTED.md](GETTING-STARTED.md) for a step-by-step walkthrough, the [slide deck](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/slide-deck/index.html) for an overview presentation, and the [sample report](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/sample-report/benchmark-report.html) for an example of the generated benchmark output.
+See [GETTING-STARTED.md](GETTING-STARTED.md) for a step-by-step walkthrough, the [slide deck](https://snowflake-labs.github.io/analytics/interactive-benchmark/slide-deck/index.html) for an overview presentation, and the [sample report](https://snowflake-labs.github.io/analytics/interactive-benchmark/sample-report/benchmark-report.html) for an example of the generated benchmark output.
 
 ## Sample Prompt
 

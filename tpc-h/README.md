@@ -1,6 +1,6 @@
 # TPC-H Benchmark on Snowflake
 
-A small Python harness that runs the [TPC-H query set](https://github.com/Snowflake-Labs/interactive-analytics/tree/main/tpc-h/queries) against Snowflake **standard**, **interactive**, and **iceberg** tables using either a **standard** or **interactive** warehouse. Setup copies TPC-H tables from Snowflake's shared [`SNOWFLAKE_SAMPLE_DATA`](https://docs.snowflake.com/en/user-guide/sample-data-tpch) database into your own benchmark database.
+A small Python harness that runs the [TPC-H query set](https://github.com/Snowflake-Labs/analytics/tree/main/tpc-h/queries) against Snowflake **standard**, **interactive**, and **iceberg** tables using either a **standard** or **interactive** warehouse. Setup copies TPC-H tables from Snowflake's shared [`SNOWFLAKE_SAMPLE_DATA`](https://docs.snowflake.com/en/user-guide/sample-data-tpch) database into your own benchmark database.
 
 All Snowflake object names (database, warehouses) are derived from the `SOLUTION_NAME` setting in `.env` (default `TPCH`). Examples below use `SOLUTION_NAME=TPCH`.
 

@@ -2,7 +2,7 @@
 
 This skill benchmarks any SQL query against a Snowflake Interactive Warehouse under concurrent load. It deploys a FastAPI server and [Locust](https://locust.io) load generator to Snowpark Container Services (SPCS), measures latency percentiles (P50/P95/P99), and auto-scales the warehouse until the P95 target is met.
 
-For an overview presentation see the [slide deck](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/slide-deck/index.html), and for an example of the generated output see the [sample report](https://snowflake-labs.github.io/interactive-analytics/interactive-benchmark/sample-report/benchmark-report.html).
+For an overview presentation see the [slide deck](https://snowflake-labs.github.io/analytics/interactive-benchmark/slide-deck/index.html), and for an example of the generated output see the [sample report](https://snowflake-labs.github.io/analytics/interactive-benchmark/sample-report/benchmark-report.html).
 
 ## 1. Install prerequisites
 
