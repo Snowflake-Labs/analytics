@@ -52,13 +52,20 @@ COPY locust/pyproject.toml locust/uv.lock /app/locust/
 RUN cd /app/locust \
     && UV_PROJECT_ENVIRONMENT=/opt/venvs/locust uv sync --frozen --no-dev --no-install-project
 
+COPY controller/pyproject.toml controller/uv.lock /app/controller/
+RUN cd /app/controller \
+    && UV_PROJECT_ENVIRONMENT=/opt/venvs/controller uv sync --frozen --no-dev --no-install-project
+
 COPY api/server.py api/entrypoint.sh /app/api/
 COPY locust/locustfile.py locust/entrypoint.sh /app/locust/
+COPY controller/iwb /app/controller/iwb
+COPY controller/run.sh /app/controller/
 COPY role-entrypoint.sh /usr/local/bin/benchmark-entrypoint
 
 RUN chmod +x \
       /app/api/entrypoint.sh \
       /app/locust/entrypoint.sh \
+      /app/controller/run.sh \
       /usr/local/bin/benchmark-entrypoint
 
 # UID 65532 has no passwd entry in some bases, which leaves HOME=/ (read-only).

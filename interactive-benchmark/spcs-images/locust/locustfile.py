@@ -2,8 +2,10 @@
 Locust workload for the interactive warehouse benchmark API.
 
 Two user classes:
-  - BenchmarkUser: fetches available query IDs from the API server
-    (GET /api/queries) and POSTs them to POST /api/run/interactive.
+  - BenchmarkUser: fetches the weighted workload from the API server
+    (GET /api/workload, or GET /api/queries with equal weights from an API
+    older than 0.3.0) and POSTs query IDs, chosen by weight, to
+    POST /api/run/interactive.
   - BaselineUser: POSTs to POST /api/run/baseline with a static payload.
     Measures pure API/infra throughput without touching Snowflake.
 
@@ -17,6 +19,7 @@ Examples:
 
 from __future__ import annotations
 
+import itertools
 import random
 
 from locust import between, task
@@ -29,18 +32,29 @@ class BenchmarkUser(FastHttpUser):
     wait_time = between(0.5, 1.5)
 
     def on_start(self) -> None:
-        resp = self.client.get("/api/queries")
-        resp.raise_for_status()
-        self.query_ids = resp.json()
-        if not self.query_ids:
+        # During a rolling update this Locust can reach an API that predates /api/workload.
+        with self.client.get("/api/workload", catch_response=True) as resp:
+            legacy = resp.status_code == 404
+            if legacy:
+                resp.success()
+        if legacy:
+            resp = self.client.get("/api/queries")
+            resp.raise_for_status()
+            workload = [{"id": query_id, "weight": 1} for query_id in resp.json()]
+        else:
+            resp.raise_for_status()
+            workload = resp.json()
+        if not workload:
             raise RuntimeError(
                 "No queries loaded on the API server. "
                 "Upload .sql files to the benchmark queries stage."
             )
+        self.query_ids = [entry["id"] for entry in workload]
+        self.cum_weights = list(itertools.accumulate(entry["weight"] for entry in workload))
 
     @task
     def run_query(self) -> None:
-        query_id = random.choice(self.query_ids)
+        query_id = random.choices(self.query_ids, cum_weights=self.cum_weights)[0]
         payload = {"query_id": query_id}
         endpoint = "/api/run/interactive"
         with self.client.post(
