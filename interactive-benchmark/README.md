@@ -2,7 +2,7 @@
 
 A [Cortex Code (CoCo)](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code) skill that benchmarks Snowflake **Interactive Warehouse** performance under concurrent load using any user-provided SQL query. The skill automates the entire workflow — from verifying that your tables and queries are suitable for interactive warehouses to deploying the benchmark infrastructure and generating reports — through conversational prompts. Zero-copy is already supported: the skill can benchmark your existing tables directly on an interactive warehouse without duplicating data.
 
-Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18**, this skill is available natively — no need to clone this repository. Just open CoCo CLI and invoke `$interactive-benchmark` directly. (Desktop support coming soon.)
+Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18** and [CoCo Desktop](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-desktop) **v1.22.1**, this skill is available natively — no need to clone this repository. Just open CoCo CLI or CoCo Desktop and invoke `$interactive-benchmark` directly.
 
 See [GETTING-STARTED.md](GETTING-STARTED.md) for a step-by-step walkthrough, the [slide deck](https://snowflake-labs.github.io/analytics/interactive-benchmark/slide-deck/index.html) for an overview presentation, and the [sample report](https://snowflake-labs.github.io/analytics/interactive-benchmark/sample-report/benchmark-report.html) for an example of the generated benchmark output.
 

@@ -8,13 +8,13 @@ For an overview presentation see the [slide deck](https://snowflake-labs.github.
 
 ## 1. Install prerequisites
 
-Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18**, the `interactive-benchmark` skill is available natively — there is no need to clone this repository. Just open CoCo CLI and invoke the skill directly (see step 4 below). (Desktop support coming soon.)
+Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18** and [CoCo Desktop](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-desktop) **v1.22.1**, the `interactive-benchmark` skill is available natively — there is no need to clone this repository. Just open CoCo CLI or CoCo Desktop and invoke the skill directly (see step 4 below).
 
 ### Required tools
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| **Cortex Code CLI** **v1.2.18+** | Runs the skill (ships built-in; Desktop support coming soon) | [Docs](https://docs.snowflake.com/en/user-guide/ui-snowsight/cortex-code) |
+| **Cortex Code CLI** **v1.2.18+** or **CoCo Desktop** **v1.22.1+** | Runs the skill (ships built-in) | [CLI docs](https://docs.snowflake.com/en/user-guide/ui-snowsight/cortex-code), [Desktop download](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-desktop) |
 | **`snow` CLI** | Snowflake CLI for SPCS operations | `pip install snowflake-cli` or `brew install snowflake-cli` |
 | **Python 3** | Validates image metadata returned by Snowflake | [python.org](https://www.python.org/downloads/) |
 | **`envsubst`** | Renders YAML specs from templates | Comes with `gettext` (`brew install gettext` on macOS) |
