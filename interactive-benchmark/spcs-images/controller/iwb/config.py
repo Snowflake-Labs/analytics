@@ -50,7 +50,7 @@ class NewWarehouse:
 @dataclass(frozen=True)
 class Report:
     warehouse: str
-    name: str | None = None
+    name: str
     benchmark_id: str | None = None
     parent_benchmark_id: str | None = None
     description: str | None = None

@@ -161,7 +161,7 @@ class Reporter:
             "report_version": REPORT_VERSION,
             "benchmark_id": self.benchmark_id,
             "parent_benchmark_id": cfg.report.parent_benchmark_id,
-            "name": cfg.report.name or cfg.name,
+            "name": cfg.report.name,
             "tags": cfg.report.tags,
             "description": cfg.report.description,
             "status": status,

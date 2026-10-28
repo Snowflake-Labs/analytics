@@ -182,7 +182,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "warehouse"
+        "warehouse",
+        "name"
       ],
       "properties": {
         "warehouse": {
@@ -192,7 +193,7 @@
         "name": {
           "type": "string",
           "minLength": 1,
-          "description": "Display name stored in the report; defaults to the optional top-level run name."
+          "description": "Display name stored in the report. The top-level name is only the run-id prefix."
         },
         "benchmark_id": {
           "type": "string",

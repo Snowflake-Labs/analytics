@@ -122,8 +122,8 @@ When the run exits without the controller's final event, or with a different cod
 
 ## Writing the run to Snowflake
 
-With `"report": {"warehouse": "MY_STD_WH", "benchmark_id": "...", "name": "My run", "description": "...", "tags": ["nightly"]}`
-(only `warehouse` is required), the controller calls `SNOWFLAKE.INTERACTIVE_ANALYTICS.WRITE_BENCHMARK_REPORT`
+With `"report": {"warehouse": "MY_STD_WH", "name": "My run", "benchmark_id": "...", "description": "...", "tags": ["nightly"]}`
+(`warehouse` and `name` are required), the controller calls `SNOWFLAKE.INTERACTIVE_ANALYTICS.WRITE_BENCHMARK_REPORT`
 three times. The first is a `VALIDATE` `progress` event, the others `REPORT` events:
 
 1. Once connected, before any query is looked up: status `CREATED`, with the inputs as given: the
@@ -140,7 +140,7 @@ three times. The first is a `VALIDATE` `progress` event, the others `REPORT` eve
 - `warehouse` must be a standard warehouse: an interactive warehouse cannot call procedures.
 - `benchmark_id` defaults to the run id. The procedure replaces a benchmark's rows on every call,
   and only its creator may update it, so let the controller be its only writer.
-- `name` overrides the top-level run name as the report's display name. The top-level name remains
+- `name` is the display name stored in the report. It is not the top-level name, which remains
   the image-safe prefix used for the internal run ID.
 - `tags` accepts either an array of strings or a key/value object; Snowsight reports use an array.
 - If the first call fails (no access to the procedure, or the feature is not enabled on the

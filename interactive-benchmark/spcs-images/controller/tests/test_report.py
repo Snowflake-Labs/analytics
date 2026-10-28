@@ -11,7 +11,8 @@ from iwb.config import Context
 
 
 def reporter(resolved=True, **overrides):
-    cfg = config.parse(base(report={"warehouse": "STD", "benchmark_id": "B1", "tags": {"team": "ui"}}, **overrides))
+    report_cfg = {"warehouse": "STD", "name": "EU", "benchmark_id": "B1", "tags": {"team": "ui"}}
+    cfg = config.parse(base(report=report_cfg, **overrides))
     r = report.Reporter(cfg, "RUN", "2026-10-15T00:00:00+00:00")
     if resolved:
         r.queries = [workload.Query("q01", "select 1", 100 / 3, Context("DB", "S"), QID1),
@@ -43,7 +44,7 @@ class WeightsTest(unittest.TestCase):
 
 class ReporterTest(unittest.TestCase):
     def test_created_report_has_the_inputs_as_given(self) -> None:
-        r = reporter(resolved=False, name="EU", warehouse={"create": {"size": "SMALL", "max_cluster_count": 2}})
+        r = reporter(resolved=False, warehouse={"create": {"size": "SMALL", "max_cluster_count": 2}})
         payload = r.payload("CREATED")
         self.assertEqual(("CREATED", "EU", 10, 60, {"team": "ui"}),
                          (payload["status"], payload["name"], payload["requested_concurrency"],
@@ -137,18 +138,13 @@ class ReportNameTest(unittest.TestCase):
         cfg = config.parse(base(report=report_dict, **overrides))
         return report.Reporter(cfg, "RUN", "2026-10-15T00:00:00+00:00")
 
-    def test_report_name_overrides_top_level_name(self) -> None:
+    def test_report_name_is_stored_not_the_run_prefix(self) -> None:
         r = self._reporter({"warehouse": "STD", "name": "My benchmark"}, name="IWB_abc123")
         self.assertEqual("My benchmark", r.payload("CREATED")["name"])
 
-    def test_top_level_name_used_when_report_name_absent(self) -> None:
-        r = self._reporter({"warehouse": "STD"}, name="EU")
-        self.assertEqual("EU", r.payload("CREATED")["name"])
-
-    def test_top_level_name_used_when_report_name_is_none(self) -> None:
-        r = self._reporter({"warehouse": "STD"}, name="EU")
-        self.assertIsNone(r.cfg.report.name)
-        self.assertEqual("EU", r.payload("CREATED")["name"])
+    def test_schema_rejects_report_without_name(self) -> None:
+        with self.assertRaises(config.ConfigError):
+            config.parse(base(report={"warehouse": "STD"}))
 
     def test_schema_accepts_report_name(self) -> None:
         cfg = config.parse(base(report={"warehouse": "STD", "name": "User run name"}))
@@ -159,11 +155,11 @@ class ReportNameTest(unittest.TestCase):
             config.parse(base(report={"warehouse": "STD", "name": ""}))
 
     def test_tags_accepts_array(self) -> None:
-        cfg = config.parse(base(report={"warehouse": "STD", "tags": ["nightly", "fast"]}))
+        cfg = config.parse(base(report={"warehouse": "STD", "name": "EU", "tags": ["nightly", "fast"]}))
         self.assertEqual(["nightly", "fast"], cfg.report.tags)
 
     def test_tags_accepts_object(self) -> None:
-        cfg = config.parse(base(report={"warehouse": "STD", "tags": {"team": "ui"}}))
+        cfg = config.parse(base(report={"warehouse": "STD", "name": "EU", "tags": {"team": "ui"}}))
         self.assertEqual({"team": "ui"}, cfg.report.tags)
 
 
@@ -177,7 +173,7 @@ class DetailColumnsTest(unittest.TestCase):
 
 class CliReportTest(unittest.TestCase):
     def run_cli(self, snow):
-        code, snow, result, events = run_cli("runner.warm", SystemExit(143), snow, report={"warehouse": "STD"})
+        code, snow, result, events = run_cli("runner.warm", SystemExit(143), snow, report={"warehouse": "STD", "name": "EU"})
         return code, calls(snow), result, events
 
     def test_report_written_at_start_and_after_teardown(self) -> None:
@@ -205,7 +201,7 @@ class CliReportTest(unittest.TestCase):
         self.assertEqual(["VALIDATE", "RUN"], [e["step"] for e in events if e["status"] == "failed"])
 
     def test_a_run_that_fails_validation_is_reported_as_error_with_its_inputs(self) -> None:
-        code, snow, result, events = run_cli(report={"warehouse": "STD"}, workload={"query_ids": [QID1]})
+        code, snow, result, events = run_cli(report={"warehouse": "STD", "name": "EU"}, workload={"query_ids": [QID1]})
         created, final = calls(snow)
         self.assertEqual(30, code)
         self.assertEqual(("CREATED", "ERROR", "INVALID_CONFIG"),
@@ -220,7 +216,7 @@ class CliReportTest(unittest.TestCase):
 
     def test_a_refused_running_write_ends_in_error_before_creating_a_warehouse(self) -> None:
         snow = FakeSnow().on(r"^CALL ", iter([[], ProgrammingError(msg="lock timeout", errno=625), []]))
-        code, snow, result, _ = run_cli(snow=snow, report={"warehouse": "STD"})
+        code, snow, result, _ = run_cli(snow=snow, report={"warehouse": "STD", "name": "EU"})
         self.assertEqual(30, code)
         self.assertEqual(["CREATED", "RUNNING", "ERROR"], [c["status"] for c in calls(snow)])
         self.assertEqual([], snow.ran("^CREATE"))
