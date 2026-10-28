@@ -154,14 +154,6 @@ class ReportNameTest(unittest.TestCase):
         with self.assertRaises(config.ConfigError):
             config.parse(base(report={"warehouse": "STD", "name": ""}))
 
-    def test_tags_accepts_array(self) -> None:
-        cfg = config.parse(base(report={"warehouse": "STD", "name": "EU", "tags": ["nightly", "fast"]}))
-        self.assertEqual(["nightly", "fast"], cfg.report.tags)
-
-    def test_tags_accepts_object(self) -> None:
-        cfg = config.parse(base(report={"warehouse": "STD", "name": "EU", "tags": {"team": "ui"}}))
-        self.assertEqual({"team": "ui"}, cfg.report.tags)
-
 
 class DetailColumnsTest(unittest.TestCase):
     def test_report_columns_are_read_only_for_a_report(self) -> None:

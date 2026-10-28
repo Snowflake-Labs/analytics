@@ -54,7 +54,7 @@ class Report:
     benchmark_id: str | None = None
     parent_benchmark_id: str | None = None
     description: str | None = None
-    tags: dict | list[str] | None = None
+    tags: dict | None = None
 
 
 @dataclass(frozen=True)

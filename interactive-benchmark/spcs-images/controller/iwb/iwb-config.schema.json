@@ -211,17 +211,7 @@
           "type": "string"
         },
         "tags": {
-          "oneOf": [
-            {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "List of report tags."
-            },
-            {
-              "type": "object",
-              "description": "Key/value report tags."
-            }
-          ]
+          "type": "object"
         }
       },
       "description": "Write the run to SNOWFLAKE.INTERACTIVE_ANALYTICS (the BENCHMARK_* views) with WRITE_BENCHMARK_REPORT; see the sandbox README."
