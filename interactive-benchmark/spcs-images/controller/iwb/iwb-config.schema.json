@@ -182,12 +182,18 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "warehouse"
+        "warehouse",
+        "name"
       ],
       "properties": {
         "warehouse": {
           "$ref": "#/$defs/warehouse_name",
           "description": "Standard warehouse for the report writes: an interactive warehouse cannot call procedures."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Display name stored in the report. The top-level name is only the run-id prefix."
         },
         "benchmark_id": {
           "type": "string",
