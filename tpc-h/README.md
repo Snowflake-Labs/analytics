@@ -26,11 +26,13 @@ See [Sample data: TPC-H](https://docs.snowflake.com/en/user-guide/sample-data-tp
 │   ├── setup_iceberg_tables.sql       # iceberg tables
 │   ├── setup_standard_warehouse.sql   # standard benchmark warehouse
 │   ├── setup_interactive_warehouse.sql # interactive benchmark warehouse
+│   ├── setup_results_table.sql        # hybrid table for saved benchmark results
 │   ├── teardown_standard_tables.sql   # drop standard schema
 │   ├── teardown_interactive_tables.sql # drop interactive schema
 │   ├── teardown_iceberg_tables.sql    # drop iceberg schema
 │   ├── teardown_standard_warehouse.sql # drop standard warehouse
 │   ├── teardown_interactive_warehouse.sql # drop interactive warehouse
+│   ├── teardown_results_table.sql     # drop results hybrid table + sequence
 │   └── teardown_database.sql          # drop entire benchmark database
 ├── src/
 │   ├── tpch_runner.py      # CLI entry shim
@@ -42,6 +44,7 @@ See [Sample data: TPC-H](https://docs.snowflake.com/en/user-guide/sample-data-tp
 │       ├── execution.py    # query runs
 │       ├── queries.py      # load query files
 │       ├── results.py      # stats, print, JSON/CSV output
+│       ├── snowflake_results.py # save run results to the hybrid table
 │       ├── sql_scripts.py  # DDL script runner
 │       └── validation.py   # SF1 result validation against tpc-h-results-1GB.json
 └── results/                # JSON + CSV per benchmark run
@@ -73,7 +76,7 @@ Standard tables live in `TPCH_SF<scale>`, interactive tables in `TPCH_SF<scale>_
 
 ## Snowflake objects created
 
-`setup --scale N` creates (or reuses) objects in `<SOLUTION_NAME>_BENCH_DB`. Use `--tables-type` and `--warehouse-type` to control what gets created (default: `all`). Run setup separately for each scale you want to benchmark.
+`setup --scale N` creates (or reuses) objects in `<SOLUTION_NAME>_BENCH_DB`. Use `--tables-type` and `--warehouse-type` to control what gets created (default: `all`, or nothing when only `--save-to-snowflake` is given). Run setup separately for each scale you want to benchmark.
 
 | Object | Type | Notes |
 |---|---|---|
@@ -84,6 +87,8 @@ Standard tables live in `TPCH_SF<scale>`, interactive tables in `TPCH_SF<scale>_
 | `<SOLUTION_NAME>_BENCH_WH_LOAD` | Standard warehouse | temporary; sized for the CTAS load and dropped at the end of each table setup script |
 | `<SOLUTION_NAME>_BENCH_WH_STD_<scale>` | Standard warehouse | used for standard warehouse benchmark |
 | `<SOLUTION_NAME>_BENCH_WH_INT_<scale>` | Interactive warehouse | used for interactive warehouse benchmark; attached to the tables in the schema selected by `--tables-type`; `FALLBACK_WAREHOUSE` is `<SOLUTION_NAME>_BENCH_WH_STD_<scale>` (auto-created if not already requested) |
+| `TPCH_RESULTS.BENCHMARK_RUNS` | Hybrid table | only with `--save-to-snowflake`; one row per benchmark run (see [Saving results to Snowflake](#saving-results-to-snowflake)) |
+| `TPCH_RESULTS.BENCHMARK_RUN_SEQ` | Sequence | generates `BENCHMARK_RUN_ID` |
 
 Per scale (with `SOLUTION_NAME=TPCH`):
 
@@ -107,6 +112,10 @@ Use `./iwtpch.sh` as a shorthand for `uv run iw-tpch` (both accept the same argu
 ./iwtpch.sh setup --scale 10 --tables-type iceberg --warehouse-type standard
 ./iwtpch.sh setup --scale 10 --tables-type iceberg --target-file-size 128
 ./iwtpch.sh setup --scale 10 --tables-type standard  # warehouses default to all
+
+# Results table only (see "Saving results to Snowflake")
+./iwtpch.sh setup --save-to-snowflake
+./iwtpch.sh setup --recreate-results-table   # drop + recreate; existing results are lost
 
 # 2. List databases and warehouses created for this solution
 ./iwtpch.sh list
@@ -132,6 +141,9 @@ Use `./iwtpch.sh` as a shorthand for `uv run iw-tpch` (both accept the same argu
 ./iwtpch.sh run --avg             # avg of 3 (default repeats) + 1 warmup
 ./iwtpch.sh run --avg --repeats 5 # avg of 5 + 1 warmup
 
+# Also save the run into the Snowflake results table
+./iwtpch.sh run --warehouse-type standard --tables-type standard --scale 100 --save-to-snowflake
+
 # 4. Optional cleanup
 ./iwtpch.sh teardown --scale 10                          # drop all schemas + warehouses for scale 10
 ./iwtpch.sh teardown --scale 10 --tables-type iceberg     # drop only iceberg schema
@@ -151,6 +163,20 @@ Use `./iwtpch.sh` as a shorthand for `uv run iw-tpch` (both accept the same argu
 ```
 
 Each run writes `results/run_<warehouse_type>-<tables_type>_sf<scale>_<workload>_<UTC-timestamp>.json` and `.csv` containing per-query rows (status, row count, client elapsed, server elapsed from `INFORMATION_SCHEMA.QUERY_HISTORY_BY_SESSION`, query_id, error) and a summary (connection, database, schema, warehouse, warehouse size, and timing stats). When running at SF1 (`--scale 1`), see [Result validation (SF1)](#result-validation-sf1) below.
+
+## Saving results to Snowflake
+
+Pass `--save-to-snowflake` to `run` to also store the run in the hybrid table `<SOLUTION_NAME>_BENCH_DB.TPCH_RESULTS.BENCHMARK_RUNS` (the target table is shown in the run header). Create the table first with `setup --save-to-snowflake`; without `--tables-type`/`--warehouse-type`, setup then creates only the results table. `setup --recreate-results-table` drops and recreates the table and its sequence.
+
+Rows are written using the standard warehouse `COMPUTE_WH` (hybrid tables can't be written through an interactive warehouse); set `RESULTS_WAREHOUSE` in `.env` to use a different one. `run` checks that this warehouse is usable before benchmarking and fails if it isn't.
+
+Each run is one row:
+
+- `BENCHMARK_RUN_ID` — primary key from the `BENCHMARK_RUN_SEQ` sequence (increasing, so rows are stored in run order)
+- `BENCHMARK_RUN_TS` — UTC time the run was saved
+- `WAREHOUSE_TYPE`, `TABLES_TYPE`, `SCALE`, `WORKLOAD`
+- one column per `summary` value in the JSON file: query counts, `VALIDATION_PASSED`/`VALIDATION_FAILED`, `CLIENT_ELAPSED_S_*` and `SERVER_ELAPSED_S_*` (`TOTAL`, `AVG`, `MEDIAN`, `MIN`, `MAX`, `P95`, as `NUMBER(18,6)`), connection, database, schema, warehouse, warehouse size, server version, `TARGET_FILE_SIZE` (iceberg only)
+- `RESULTS_JSON` — the complete JSON results file as a `VARIANT`
 
 ## Result validation (SF1)
 
