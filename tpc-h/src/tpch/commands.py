@@ -33,6 +33,12 @@ from src.tpch.results import (
     summarize,
     write_results,
 )
+from src.tpch.snowflake_results import (
+    SETUP_SCRIPT,
+    TEARDOWN_SCRIPT,
+    results_table_fqn,
+    save_run_to_snowflake,
+)
 from src.tpch.sql_scripts import execute_script, print_setup_tables
 from src.tpch.types import QueryResult
 from src.tpch.validation import apply_validation, load_expected_results_1gb
@@ -85,8 +91,14 @@ def _run_sql_script_cmd(
 
 def cmd_setup(args) -> int:
     scale = args.scale
+    save_results = args.save_to_snowflake or args.recreate_results_table
     tables_type = args.tables_type
     warehouse_type = args.warehouse_type
+    # With --save-to-snowflake and no explicit types, only set up the results table.
+    if tables_type is None and warehouse_type is None and save_results:
+        tables_type = warehouse_type = "none"
+    tables_type = tables_type or "all"
+    warehouse_type = warehouse_type or "all"
 
     try:
         connection = resolve_connection_name(args.connection)
@@ -106,8 +118,13 @@ def cmd_setup(args) -> int:
         "interactive": "setup_interactive_warehouse.sql",
     }
 
-    tbl_keys = list(table_scripts) if tables_type == "all" else [tables_type]
-    wh_keys = list(warehouse_scripts) if warehouse_type == "all" else [warehouse_type]
+    def _keys(selected: str, available: dict[str, str]) -> list[str]:
+        if selected == "none":
+            return []
+        return list(available) if selected == "all" else [selected]
+
+    tbl_keys = _keys(tables_type, table_scripts)
+    wh_keys = _keys(warehouse_type, warehouse_scripts)
 
     # An interactive warehouse requires a standard fallback warehouse.
     if "interactive" in wh_keys and "standard" not in wh_keys:
@@ -122,7 +139,7 @@ def cmd_setup(args) -> int:
     # Warehouse scripts reference the schema where tables live.
     # When tables_type is specific, use that schema; when "all", use the
     # natural pairing (interactive tables for interactive warehouse).
-    if tables_type != "all":
+    if tables_type not in ("all", "none"):
         wh_schema = schema_for_tables_type(tables_type, scale)
     else:
         wh_schema = interactive_schema_for_scale(scale)
@@ -184,13 +201,23 @@ def cmd_setup(args) -> int:
                 cur.execute(f"USE WAREHOUSE {_cfg.SOLUTION_NAME}_BENCH_WH_STD_{scale}")
             finally:
                 cur.close()
-        print_setup_tables(conn, scale)
+        if tbl_keys or wh_keys:
+            print_setup_tables(conn, scale)
+
+        if args.recreate_results_table:
+            print(f"Dropping results table {results_table_fqn()}…")
+            execute_script(conn, SQL_DIR / TEARDOWN_SCRIPT, subs)
+        if save_results:
+            print(f"Creating results table {results_table_fqn()}…")
+            execute_script(conn, SQL_DIR / SETUP_SCRIPT, subs)
 
     print(
         f"\nSetup complete. Created:"
-        f"\n  tables     : {', '.join(tbl_keys)}"
-        f"\n  warehouses : {', '.join(wh_keys)}"
+        f"\n  tables     : {', '.join(tbl_keys) or '(none)'}"
+        f"\n  warehouses : {', '.join(wh_keys) or '(none)'}"
     )
+    if save_results:
+        print(f"  results    : {results_table_fqn()}")
     return 0
 
 
@@ -289,6 +316,8 @@ def cmd_run(args) -> int:
     print(f"  connection: {connection}")
     print(f"  database  : {database}")
     print(f"  schema    : {schema}")
+    if args.save_to_snowflake:
+        print(f"  save to   : {results_table_fqn()}")
 
     results: list[QueryResult] = []
     wh_size = "unknown"
@@ -377,6 +406,10 @@ def cmd_run(args) -> int:
     json_path, csv_path = write_results(warehouse_type, tables_type, scale, workload, results, summary)
     print(f"\nWrote {json_path}")
     print(f"Wrote {csv_path}")
+    if args.save_to_snowflake:
+        with connect(connection_name=connection) as conn:
+            run_id = save_run_to_snowflake(conn, json_path, warehouse=warehouse)
+        print(f"Saved run {run_id} to {results_table_fqn()}")
     validation_failed = summary.get("validation_failed", 0)
     return 0 if summary["failed"] == 0 and validation_failed == 0 else 1
 
