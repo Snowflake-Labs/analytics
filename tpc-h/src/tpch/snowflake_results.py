@@ -1,18 +1,37 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
+
+import snowflake.connector
 
 from src.tpch import config as _cfg
 
 RESULTS_SCHEMA = "TPCH_RESULTS"
 RESULTS_TABLE = "BENCHMARK_RUNS"
 RESULTS_SEQUENCE = "BENCHMARK_RUN_SEQ"
+# Hybrid tables can't be written through an interactive warehouse, so results
+# are always saved using a standard warehouse.
+RESULTS_WAREHOUSE = os.getenv("RESULTS_WAREHOUSE", "COMPUTE_WH")
 SETUP_SCRIPT = "setup_results_table.sql"
 TEARDOWN_SCRIPT = "teardown_results_table.sql"
 
 _STATS = ("total", "avg", "median", "min", "max", "p95")
+
+
+def check_results_warehouse(conn, warehouse: str = RESULTS_WAREHOUSE) -> None:
+    """Raise RuntimeError if ``warehouse`` can't be used for saving results."""
+    with conn.cursor() as cur:
+        try:
+            cur.execute(f"USE WAREHOUSE {warehouse}")
+        except snowflake.connector.errors.ProgrammingError as exc:
+            raise RuntimeError(
+                f"Results warehouse {warehouse} is not available: {exc.msg}\n"
+                "It is required by --save-to-snowflake. Grant USAGE on it, or set "
+                "RESULTS_WAREHOUSE in .env to another standard warehouse."
+            ) from exc
 
 
 def results_table_fqn() -> str:
@@ -20,7 +39,7 @@ def results_table_fqn() -> str:
 
 
 def save_run_to_snowflake(conn, json_path: Path, run_ts: datetime | None = None,
-    warehouse: str | None = None) -> int:
+    warehouse: str = RESULTS_WAREHOUSE) -> int:
     """Insert one row for the run described by ``json_path``; returns the run id."""
     doc = json.loads(json_path.read_text())
     s = doc["summary"]
@@ -66,8 +85,7 @@ def save_run_to_snowflake(conn, json_path: Path, run_ts: datetime | None = None,
         json.dumps(doc),
     ]
     with conn.cursor() as cur:
-        if warehouse:
-            cur.execute(f"USE WAREHOUSE {warehouse}")
+        cur.execute(f"USE WAREHOUSE {warehouse}")
         # Fetch the id up front so it can be reported back to the caller.
         cur.execute(
             f"SELECT {_cfg.BENCHMARK_DATABASE}.{RESULTS_SCHEMA}.{RESULTS_SEQUENCE}.NEXTVAL"

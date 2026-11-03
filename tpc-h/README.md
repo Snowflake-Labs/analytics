@@ -168,6 +168,8 @@ Each run writes `results/run_<warehouse_type>-<tables_type>_sf<scale>_<workload>
 
 Pass `--save-to-snowflake` to `run` to also store the run in the hybrid table `<SOLUTION_NAME>_BENCH_DB.TPCH_RESULTS.BENCHMARK_RUNS` (the target table is shown in the run header). Create the table first with `setup --save-to-snowflake`; without `--tables-type`/`--warehouse-type`, setup then creates only the results table. `setup --recreate-results-table` drops and recreates the table and its sequence.
 
+Rows are written using the standard warehouse `COMPUTE_WH` (hybrid tables can't be written through an interactive warehouse); set `RESULTS_WAREHOUSE` in `.env` to use a different one. `run` checks that this warehouse is usable before benchmarking and fails if it isn't.
+
 Each run is one row:
 
 - `BENCHMARK_RUN_ID` — primary key from the `BENCHMARK_RUN_SEQ` sequence (increasing, so rows are stored in run order)

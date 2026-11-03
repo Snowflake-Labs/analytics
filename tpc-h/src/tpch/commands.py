@@ -34,8 +34,10 @@ from src.tpch.results import (
     write_results,
 )
 from src.tpch.snowflake_results import (
+    RESULTS_WAREHOUSE,
     SETUP_SCRIPT,
     TEARDOWN_SCRIPT,
+    check_results_warehouse,
     results_table_fqn,
     save_run_to_snowflake,
 )
@@ -317,11 +319,17 @@ def cmd_run(args) -> int:
     print(f"  database  : {database}")
     print(f"  schema    : {schema}")
     if args.save_to_snowflake:
-        print(f"  save to   : {results_table_fqn()}")
+        print(f"  save to   : {results_table_fqn()} (via {RESULTS_WAREHOUSE})")
 
     results: list[QueryResult] = []
     wh_size = "unknown"
     with connect(connection_name=connection) as conn:
+        if args.save_to_snowflake:
+            try:
+                check_results_warehouse(conn)
+            except RuntimeError as exc:
+                print(f"\n{exc}", file=sys.stderr)
+                return 2
         cur = conn.cursor()
         try:
             wh_size = ensure_warehouse_started(conn, warehouse)
@@ -408,7 +416,7 @@ def cmd_run(args) -> int:
     print(f"Wrote {csv_path}")
     if args.save_to_snowflake:
         with connect(connection_name=connection) as conn:
-            run_id = save_run_to_snowflake(conn, json_path, warehouse=warehouse)
+            run_id = save_run_to_snowflake(conn, json_path)
         print(f"Saved run {run_id} to {results_table_fqn()}")
     validation_failed = summary.get("validation_failed", 0)
     return 0 if summary["failed"] == 0 and validation_failed == 0 else 1
