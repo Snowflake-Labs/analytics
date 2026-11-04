@@ -13,22 +13,20 @@ source "$SCRIPT_DIR/_lib.sh"
 
 MODE="${1:-full}"
 
-# Query SYSTEM$GET_SERVICE_STATUS which returns container-level details.
+# Fetch per-container status via `snow spcs service list-containers`.
 service_info() {
   local svc="$1"
-  snow sql --connection "$CONNECTION" --format json -q \
-    "SELECT SYSTEM\$GET_SERVICE_STATUS('${DB}.${SCHEMA}.${svc}') AS info" 2>/dev/null \
+  spcs service list-containers "$svc" --format json 2>/dev/null \
     | python3 -c '
 import json, sys
 try:
     rows = json.load(sys.stdin)
-    info = json.loads(rows[0]["INFO"] if "INFO" in rows[0] else rows[0].get("info","[]"))
-    for inst in info:
-        status = inst.get("status","UNKNOWN")
-        msg = inst.get("message","")
-        print(f"{status}\t{msg}")
-except Exception as e:
-    print(f"UNKNOWN\t{e}")
+except Exception:
+    rows = []
+for r in rows or []:
+    status = r.get("status") or "UNKNOWN"
+    msg = r.get("message") or ""
+    print(f"{status}\t{msg}")
 '
 }
 
@@ -56,8 +54,7 @@ service_message() {
 
 service_url() {
   local svc="$1"
-  snow spcs service list-endpoints "${DB}.${SCHEMA}.${svc}" \
-    --connection "$CONNECTION" --format json 2>/dev/null \
+  spcs service list-endpoints "$svc" --format json 2>/dev/null \
     | python3 -c '
 import json, sys
 try:

@@ -17,6 +17,7 @@ from threading import Lock, Semaphore
 from typing import Any
 
 import snowflake.connector
+import httpx
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -36,11 +37,13 @@ POOL_SIZE = int(os.environ.get("POOL_SIZE", "40"))
 POOL_WARMUP = int(os.environ.get("POOL_WARMUP", "0"))
 POOL_ACQUIRE_TIMEOUT = float(os.environ.get("POOL_ACQUIRE_TIMEOUT", "30"))
 WORKERS = int(os.environ.get("WORKERS", "1"))
-LOOKBACK_DAYS = 15
+LOOKBACK_DAYS_OPTIONS = [15, 30, 90, 180]
+DEFAULT_LOOKBACK_DAYS = 90
 TARGETS = ["standard", "interactive"]
 DEFAULT_TARGET = "interactive"
 
 QUERY_TAG = "IW_DEMO_DASHBOARD"
+LOCUST_URL = os.environ.get("LOCUST_URL", "").rstrip("/")
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("dashboard")
@@ -90,8 +93,8 @@ def credential_cache_description() -> str:
     return CREDENTIAL_CACHE_DIR
 
 
-def schema_for_target(target: str, scale: str) -> str:
-    return f"TPCH_SF{scale}_IT" if target == "interactive" else f"TPCH_SF{scale}"
+def schema_for_scale(scale: str) -> str:
+    return f"TPCH_SF{scale}"
 
 
 def warehouse_for_target(target: str, scale: str) -> str:
@@ -118,12 +121,24 @@ def resolve_scale(raw: str | None) -> str:
     return scale
 
 
-def boundaries_cte() -> str:
+def resolve_lookback(raw: str | int | None) -> int:
+    if raw is None:
+        return DEFAULT_LOOKBACK_DAYS
+    try:
+        val = int(raw)
+    except (ValueError, TypeError):
+        return DEFAULT_LOOKBACK_DAYS
+    if val not in LOOKBACK_DAYS_OPTIONS:
+        return DEFAULT_LOOKBACK_DAYS
+    return val
+
+
+def boundaries_cte(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> str:
     return f"""
 WITH boundaries AS (
   SELECT
     MAX(L_SHIPDATE) AS end_date,
-    DATEADD(day, -{LOOKBACK_DAYS}, MAX(L_SHIPDATE)) AS start_date
+    DATEADD(day, -{lookback_days}, MAX(L_SHIPDATE)) AS start_date
   FROM LINEITEM_DASHBOARD
 )"""
 
@@ -140,6 +155,7 @@ def build_dashboard_query(
     *,
     select: str,
     segment: str | None,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     extra_where: list[str] | None = None,
     group_by: str = "",
     order_by: str = "",
@@ -154,7 +170,7 @@ def build_dashboard_query(
         where.extend(extra_where)
 
     parts = [
-        boundaries_cte().strip(),
+        boundaries_cte(lookback_days).strip(),
         select.strip(),
         "FROM LINEITEM_DASHBOARD l",
         "CROSS JOIN boundaries",
@@ -216,7 +232,7 @@ def connection_kwargs_for(target: str, scale: str) -> dict[str, Any]:
         **credential_cache_options(),
         "warehouse": warehouse_for_target(target, scale),
         "database": DATABASE,
-        "schema": schema_for_target(target, scale),
+        "schema": schema_for_scale(scale),
         "session_parameters": {
             "QUERY_TAG": QUERY_TAG,
             "USE_CACHED_RESULT": False,
@@ -288,23 +304,45 @@ class ConnectionPool:
             sem.release()
 
     def warmup(self, target: str, scale: str, count: int | None = None) -> int:
-        """Pre-open up to `count` (default: POOL_SIZE) connections and park them."""
+        """Pre-open up to `count` (default: POOL_SIZE) connections and park them.
+
+        Acquires a semaphore slot for each connection so the pool invariant
+        (at most ``size`` live connections) is preserved.
+        """
         key = f"{target}:{scale}"
-        idle, _sem = self._slots_for(key)
+        idle, sem = self._slots_for(key)
         want = self._size if count is None else min(count, self._size)
         opened = 0
         for _ in range(want):
+            if not sem.acquire(timeout=0):
+                break
             try:
                 conn = self._new_connection(target, scale)
             except Exception as exc:
+                sem.release()
                 log.warning("Pool warmup failed for %s after %d/%d: %s", key, opened, want, exc)
                 break
             idle.put_nowait(conn)
             opened += 1
         return opened
 
+    def close_all(self) -> None:
+        """Close all idle connections in the pool."""
+        with self._init_lock:
+            for key, idle in self._idle.items():
+                while True:
+                    try:
+                        conn = idle.get_nowait()
+                    except Empty:
+                        break
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
 
 pool = ConnectionPool()
+pool_ready = asyncio.Event()
 
 
 def execute_query(
@@ -325,9 +363,10 @@ def run_dashboard_query(
     target: str,
     scale: str,
     segment: str | None,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     **options: Any,
 ) -> tuple[list[dict[str, Any]], int]:
-    sql, binds = build_dashboard_query(segment=segment, **options)
+    sql, binds = build_dashboard_query(segment=segment, lookback_days=lookback_days, **options)
     return execute_query(sql, target, scale, binds)
 
 
@@ -336,7 +375,7 @@ def snowflake_log_context(warehouse: str | None, scale: str | None) -> str:
         resolved_target = resolve_target(warehouse)
         resolved_scale = resolve_scale(scale)
         wh = warehouse_for_target(resolved_target, resolved_scale)
-        schema = schema_for_target(resolved_target, resolved_scale)
+        schema = schema_for_scale(resolved_scale)
         return f" warehouse={wh} schema={schema}"
     except ValueError:
         return ""
@@ -346,7 +385,8 @@ def request_params(
     warehouse: str | None,
     scale: str | None,
     segment: str | None,
-) -> tuple[str, str, str | None]:
+    lookback: str | None = None,
+) -> tuple[str, str, str | None, int]:
     try:
         target = resolve_target(warehouse)
         resolved_scale = resolve_scale(scale)
@@ -359,7 +399,9 @@ def request_params(
         trimmed = segment.strip()
         resolved_segment = trimmed if trimmed else None
 
-    return target, resolved_scale, resolved_segment
+    resolved_lookback = resolve_lookback(lookback)
+
+    return target, resolved_scale, resolved_segment, resolved_lookback
 
 
 @asynccontextmanager
@@ -411,15 +453,16 @@ async def lifespan(_app: FastAPI):
                     )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Warmup failed for %s:%s: %s", target, scale, exc)
+            pool_ready.set()
 
-        # Run warmup in the background so the app can start serving requests
-        # immediately (important for SPCS readiness probes on cold start).
         warmup_task = asyncio.create_task(_warmup_all())
     else:
+        pool_ready.set()
         warmup_task = None
     yield
     if warmup_task is not None and not warmup_task.done():
         warmup_task.cancel()
+    pool.close_all()
 
 
 app = FastAPI(title="TPC-H Benchmark Dashboard", lifespan=lifespan)
@@ -490,6 +533,13 @@ def index():
     return FileResponse(ROOT_DIR / "public" / "index.html")
 
 
+@app.get("/api/ready")
+async def ready() -> dict[str, str]:
+    if not pool_ready.is_set():
+        raise HTTPException(status_code=503, detail="Pool warming up")
+    return {"status": "ready"}
+
+
 @app.get("/api/config")
 def api_config(
     request: Request,
@@ -506,13 +556,15 @@ def api_config(
             "scale": resolved_scale,
             "defaultScale": DEFAULT_SCALE,
             "scales": SCALES,
-            "lookbackDays": LOOKBACK_DAYS,
+            "locustAvailable": _locust_available(),
+            "lookbackDays": DEFAULT_LOOKBACK_DAYS,
+            "lookbackDaysOptions": LOOKBACK_DAYS_OPTIONS,
             "standard": {
-                "schema": schema_for_target("standard", resolved_scale),
+                "schema": schema_for_scale(resolved_scale),
                 "warehouse": warehouse_for_target("standard", resolved_scale),
             },
             "interactive": {
-                "schema": schema_for_target("interactive", resolved_scale),
+                "schema": schema_for_scale(resolved_scale),
                 "warehouse": warehouse_for_target("interactive", resolved_scale),
             },
         },
@@ -522,16 +574,18 @@ def api_config(
 
 @app.get("/api/segments")
 async def api_segments(request: Request):
-    target, scale, segment = request_params(
+    target, scale, segment, lookback = request_params(
         warehouse=request.query_params.get("warehouse"),
         scale=request.query_params.get("scale"),
         segment=request.query_params.get("segment"),
+        lookback=request.query_params.get("lookback"),
     )
     rows, query_ms = await asyncio.to_thread(
         run_dashboard_query,
         target,
         scale,
         segment,
+        lookback,
         select="SELECT DISTINCT l.L_MKTSEGMENT AS market_segment",
         extra_where=["l.L_MKTSEGMENT IS NOT NULL"],
         order_by="ORDER BY market_segment ASC",
@@ -545,16 +599,18 @@ async def api_segments(request: Request):
 
 @app.get("/api/kpis")
 async def api_kpis(request: Request):
-    target, scale, segment = request_params(
+    target, scale, segment, lookback = request_params(
         warehouse=request.query_params.get("warehouse"),
         scale=request.query_params.get("scale"),
         segment=request.query_params.get("segment"),
+        lookback=request.query_params.get("lookback"),
     )
     rows, query_ms = await asyncio.to_thread(
         run_dashboard_query,
         target,
         scale,
         segment,
+        lookback,
         select=f"""SELECT
           COUNT(DISTINCT l.L_ORDERKEY) AS total_orders,
           ROUND(SUM({lineitem_revenue("l")}), 2) AS total_revenue,
@@ -567,16 +623,18 @@ async def api_kpis(request: Request):
 
 @app.get("/api/orders-over-time")
 async def api_orders_over_time(request: Request):
-    target, scale, segment = request_params(
+    target, scale, segment, lookback = request_params(
         warehouse=request.query_params.get("warehouse"),
         scale=request.query_params.get("scale"),
         segment=request.query_params.get("segment"),
+        lookback=request.query_params.get("lookback"),
     )
     rows, query_ms = await asyncio.to_thread(
         run_dashboard_query,
         target,
         scale,
         segment,
+        lookback,
         select=f"""SELECT
           DATE_TRUNC('day', l.L_SHIPDATE) AS order_day,
           COUNT(DISTINCT l.L_ORDERKEY) AS total_orders,
@@ -589,16 +647,18 @@ async def api_orders_over_time(request: Request):
 
 @app.get("/api/by-segment")
 async def api_by_segment(request: Request):
-    target, scale, segment = request_params(
+    target, scale, segment, lookback = request_params(
         warehouse=request.query_params.get("warehouse"),
         scale=request.query_params.get("scale"),
         segment=request.query_params.get("segment"),
+        lookback=request.query_params.get("lookback"),
     )
     rows, query_ms = await asyncio.to_thread(
         run_dashboard_query,
         target,
         scale,
         segment,
+        lookback,
         select=f"""SELECT l.L_MKTSEGMENT AS market_segment,
                COUNT(DISTINCT l.L_ORDERKEY) AS order_count,
                SUM({lineitem_revenue("l")}) AS revenue""",
@@ -610,16 +670,18 @@ async def api_by_segment(request: Request):
 
 @app.get("/api/by-region")
 async def api_by_region(request: Request):
-    target, scale, segment = request_params(
+    target, scale, segment, lookback = request_params(
         warehouse=request.query_params.get("warehouse"),
         scale=request.query_params.get("scale"),
         segment=request.query_params.get("segment"),
+        lookback=request.query_params.get("lookback"),
     )
     rows, query_ms = await asyncio.to_thread(
         run_dashboard_query,
         target,
         scale,
         segment,
+        lookback,
         select=f"""SELECT l.L_REGIONNAME AS region,
                COUNT(DISTINCT l.L_ORDERKEY) AS order_count,
                SUM({lineitem_revenue("l")}) AS revenue""",
@@ -631,16 +693,18 @@ async def api_by_region(request: Request):
 
 @app.get("/api/latest-orders")
 async def api_latest_orders(request: Request):
-    target, scale, segment = request_params(
+    target, scale, segment, lookback = request_params(
         warehouse=request.query_params.get("warehouse"),
         scale=request.query_params.get("scale"),
         segment=request.query_params.get("segment"),
+        lookback=request.query_params.get("lookback"),
     )
     rows, query_ms = await asyncio.to_thread(
         run_dashboard_query,
         target,
         scale,
         segment,
+        lookback,
         select=f"""SELECT l.L_ORDERKEY AS order_id,
              MAX(l.L_SHIPDATE) AS order_date,
              l.L_ORDERSTATUS AS status,
@@ -656,21 +720,93 @@ async def api_latest_orders(request: Request):
 
 @app.get("/api/table-stats")
 async def api_table_stats(request: Request):
-    target, scale, segment = request_params(
+    target, scale, segment, lookback = request_params(
         warehouse=request.query_params.get("warehouse"),
         scale=request.query_params.get("scale"),
         segment=request.query_params.get("segment"),
+        lookback=request.query_params.get("lookback"),
     )
     rows, query_ms = await asyncio.to_thread(
         run_dashboard_query,
         target,
         scale,
         segment,
+        lookback,
         select="""SELECT
         COUNT(*) AS lineitem_rows,
         COUNT(DISTINCT l.L_ORDERKEY) AS order_rows""",
     )
     return json_api(rows[0] if rows else {}, request, query_ms)
+
+
+# ---------------------------------------------------------------------------
+# Locust proxy — forward start/stop/stats to the Locust REST API
+# ---------------------------------------------------------------------------
+
+def _locust_available() -> bool:
+    return bool(LOCUST_URL)
+
+
+@app.get("/api/locust/status")
+async def locust_status():
+    if not _locust_available():
+        return JSONResponse({"available": False})
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{LOCUST_URL}/stats/requests")
+            data = r.json()
+            return JSONResponse({
+                "available": True,
+                "state": data.get("state", "unknown"),
+                "userCount": data.get("user_count", 0),
+                "totalRps": round(sum(
+                    s.get("current_rps", 0)
+                    for s in data.get("stats", [])
+                    if s.get("name") != "Aggregated"
+                ), 2),
+                "workers": data.get("workers", []),
+            })
+    except Exception:
+        return JSONResponse({"available": True, "state": "unreachable", "userCount": 0, "totalRps": 0})
+
+
+@app.post("/api/locust/start")
+async def locust_start(request: Request):
+    if not _locust_available():
+        raise HTTPException(status_code=404, detail="Locust integration not configured")
+    body = await request.json()
+    user_count = int(body.get("userCount", 10))
+    spawn_rate = int(body.get("spawnRate", 5))
+    warehouse = body.get("warehouse", "interactive")
+    scale = body.get("scale", str(DEFAULT_SCALE))
+    lookback = body.get("lookback", "90")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{LOCUST_URL}/swarm",
+                data={
+                    "user_count": user_count,
+                    "spawn_rate": spawn_rate,
+                    "warehouse": warehouse,
+                    "scale": scale,
+                    "lookback": lookback,
+                },
+            )
+            return JSONResponse(r.json())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Locust unreachable: {exc}") from exc
+
+
+@app.post("/api/locust/stop")
+async def locust_stop():
+    if not _locust_available():
+        raise HTTPException(status_code=404, detail="Locust integration not configured")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{LOCUST_URL}/stop")
+            return JSONResponse(r.json())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Locust unreachable: {exc}") from exc
 
 
 def main() -> None:

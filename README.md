@@ -7,7 +7,9 @@ workloads.
 
 ## Getting Started
 
-**Looking for the Interactive Benchmark skill?** Follow the [Getting Started guide](./interactive-benchmark/GETTING-STARTED.md) to clone the repo, install prerequisites, and run your first interactive warehouse benchmark in minutes.
+**Looking for the Interactive Benchmark skill?** Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18** and [CoCo Desktop](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-desktop) **v1.22.1**, the `interactive-benchmark` skill is available natively — no need to clone this repository. Just open CoCo CLI or CoCo Desktop and invoke the skill directly.
+
+Follow the [Getting Started guide](./interactive-benchmark/GETTING-STARTED.md) for prerequisites and a step-by-step walkthrough.
 
 ## Contents
 

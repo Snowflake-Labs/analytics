@@ -1,8 +1,12 @@
 # Benchmark API + Locust on Snowpark Container Services
 
-The benchmark infrastructure (under `.cortex/skills/interactive-benchmark/benchmark/`) runs the API server
+The benchmark infrastructure runs the API server
 **and** the [Locust](https://locust.io) load test entirely inside Snowflake, with public
 ingress URLs you can hit from your laptop.
+
+Container images (Dockerfiles and app source code) live in `interactive-benchmark/spcs-images/`.
+The CoCo skill (`.cortex/skills/interactive-benchmark/`) handles deployment and orchestration
+using pre-built images.
 
 ## Topology
 
@@ -39,41 +43,46 @@ All paths below are relative to the repo root.
 ```
 .cortex/skills/interactive-benchmark/benchmark/
 ├── .env                     # solution name + connection (from .env.template)
-├── api/                     # FastAPI benchmark server source
-├── locust/                  # Locust load generator source
 ├── test/                    # benchmark query .sql files
 ├── reports/                 # output reports (per run)
 ├── scripts/
 │   ├── _lib.sh              # shared helpers (sources spcs/config.env)
-│   ├── deploy.sh            # full SPCS deploy (prerequisites, build, push, create services)
-│   ├── build-and-push.sh    # docker build + push both images
+│   ├── deploy.sh            # SPCS deploy (prerequisites, create services)
 │   ├── upload-queries.sh    # upload .sql files from test/ to the Snowflake stage
 │   ├── status.sh            # service state + ingress URLs
 │   ├── logs.sh              # tail container logs
-│   ├── update.sh            # rebuild + ALTER SERVICE (preserves ingress URLs)
+│   ├── update.sh            # upload queries + restart API
 │   ├── resize-wh.sh         # resize interactive warehouse (size/MCW)
 │   ├── list.sh              # list all SPCS resources
-│   ├── teardown.sh          # drop services, compute pools, and image repo
+│   ├── teardown.sh          # drop services and compute pools
 │   └── update-progress.sh   # atomic progress.json updater
 └── spcs/
     ├── config.env           # all knobs (connection, names, resources, locust params)
     ├── config.env.template  # template for config.env
-    ├── api/                 # benchmark API image (Dockerfile, entrypoint, .dockerignore)
-    ├── locust/              # locust image (Dockerfile, entrypoint, .dockerignore)
     └── specs/               # SPCS service YAML specs
+
+interactive-benchmark/spcs-images/
+├── Dockerfile               # one image containing both runtimes
+├── role-entrypoint.sh       # BENCHMARK_ROLE=api|locust dispatcher
+├── api/                     # benchmark API source
+└── locust/                  # Locust source
 ```
 
 Benchmark query `.sql` files live in `test/` locally and are uploaded to a
 Snowflake internal stage (`@BENCHMARK_QUERIES`) during deployment. The API
 container mounts this stage at `/app/test/`, so queries can be updated without
-rebuilding Docker images.
+rebuilding images.
 
 ## Prerequisites
 
-- Docker Desktop.
+### For deploying and running benchmarks
+
 - `snow` CLI configured with the connection listed in `spcs/config.env` (`PM` by default).
-- The connection's role must be able to `CREATE COMPUTE POOL`, `CREATE IMAGE
-  REPOSITORY`, and `CREATE SERVICE`. `ACCOUNTADMIN` works.
+- Python 3 and `envsubst` (`gettext`) for image validation and spec rendering.
+- The connection's role must be able to create the benchmark
+  database/schema/stage, compute pools, services, and public service endpoints;
+  use `DEPLOY_WAREHOUSE`; and read the approved System Registry image.
+  `ACCOUNTADMIN` works.
 - The API's runtime role (`API_ROLE`) needs `USAGE` on the interactive
   warehouse and `SELECT` on the interactive schema.
 
@@ -85,18 +94,22 @@ rebuilding Docker images.
 
 `deploy.sh` will:
 
-1. Create `DB.SCHEMA`, **two independent compute pools** (one for the
-   API, one for Locust), the image repository, and an internal stage
-   for benchmark queries (idempotent).
+1. Verify the exact approved image/tag and architecture, then create
+   `DB.SCHEMA`, **two independent compute pools** (one for the API, one for
+   Locust), and an internal stage for benchmark queries (idempotent).
 2. Upload `.sql` files from `benchmark/test/` to the queries stage.
-3. Build and push both images to the SPCS image repo.
-4. `CREATE SERVICE` for:
+3. `CREATE SERVICE` for:
    - `API_SERVICE` on `API_COMPUTE_POOL` — the benchmark API (with the
      queries stage mounted at `/app/test/`).
    - `LOCUST_SERVICE` on `LOCUST_COMPUTE_POOL` — the Locust load generator.
    Or `ALTER SERVICE` if they already exist.
-5. Poll `SYSTEM$GET_SERVICE_STATUS` until both report `READY`.
-6. Print the public ingress URLs.
+4. Poll `SYSTEM$GET_SERVICE_STATUS` until both report `READY`.
+5. Print the public ingress URLs.
+
+Both services use the immutable approved image
+`interactive-analytics/interactive-benchmark:0.3.1` from
+`SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES`; their specs select
+`BENCHMARK_ROLE=api` or `BENCHMARK_ROLE=locust`.
 
 ## Naming convention
 
@@ -105,11 +118,11 @@ With `SOLUTION_NAME=IW_TPCH`, the objects created are:
 
 | Object | Name |
 |--------|------|
-| Database | `IW_TPCH_BENCH_DB` |
+| Database | `IW_TPCH_DB` |
 | Schema | `SPCS` |
-| Image repository | `IW_TPCH_BENCH_IMAGES` |
-| API compute pool | `IW_TPCH_BENCH_API_POOL` |
-| Locust compute pool | `IW_TPCH_BENCH_LOCUST_POOL` |
+
+| API compute pool | `IW_TPCH_API_POOL` |
+| Locust compute pool | `IW_TPCH_LOCUST_POOL` |
 | API service | `BENCHMARK_API` |
 | Locust service | `BENCHMARK_LOCUST` |
 | Queries stage | `BENCHMARK_QUERIES` |
@@ -124,22 +137,18 @@ instances in the same account.
 Edit or replace `.sql` files in `benchmark/test/`, then:
 
 ```bash
-.cortex/skills/interactive-benchmark/benchmark/scripts/update.sh --queries-only
-```
-
-This uploads the new queries to the stage and restarts the API service. No
-Docker build is needed — takes seconds instead of minutes.
-
-### Changing application code
-
-Edit the app code (or `spcs/specs/*.yaml`) and run:
-
-```bash
 .cortex/skills/interactive-benchmark/benchmark/scripts/update.sh
 ```
 
-`update.sh` uploads queries, rebuilds images, pushes, and `ALTER SERVICE`s in
-place, so the public ingress URLs stay the same.
+This uploads the new queries to the stage and restarts the API service. No
+image rebuild is needed — takes seconds instead of minutes.
+
+### Changing application code
+
+Edit the app source in `interactive-benchmark/spcs-images/`, validate both
+roles, and publish a new immutable approved-image version through the
+maintainer release process. Update `IMAGE_TAG` only after the new tag is
+visible in the System Registry; never replace or deploy `latest`.
 
 ## Auth model inside the container
 
@@ -149,7 +158,7 @@ Every SPCS container gets:
 - An OAuth token file at `/snowflake/session/token` scoped to the service's
   owner role.
 
-`spcs/api/entrypoint.sh` writes a small `~/.snowflake/connections.toml`
+`spcs/api/entrypoint.sh` (in `interactive-benchmark/spcs-images/api/`) writes a small `~/.snowflake/connections.toml`
 pointing at that token file and sets `CONNECTION_NAME=spcs`. The unchanged
 `api/server.py` picks it up via its normal `connections.toml` path.
 
@@ -175,16 +184,16 @@ curl -s <LOCUST_URL>/stop
 ```bash
 SCRIPTS=.cortex/skills/interactive-benchmark/benchmark/scripts
 
-$SCRIPTS/deploy.sh                  # full SPCS deploy (idempotent)
+$SCRIPTS/deploy.sh                  # SPCS deploy (idempotent, uses pre-built images)
 $SCRIPTS/upload-queries.sh          # upload .sql files to the queries stage
-$SCRIPTS/update.sh --queries-only   # upload queries + restart API (no image rebuild)
+$SCRIPTS/update.sh                  # upload queries + restart API
 $SCRIPTS/list.sh                    # list all SPCS resources in the schema
 $SCRIPTS/status.sh                  # show state + endpoints for both services
 $SCRIPTS/status.sh --urls-only      # just the ingress URLs
 $SCRIPTS/logs.sh api                # benchmark API logs
 $SCRIPTS/logs.sh locust             # locust load-generator logs
 $SCRIPTS/resize-wh.sh --size M      # resize the interactive warehouse
-$SCRIPTS/teardown.sh                # drop services, compute pools, and image repo
+$SCRIPTS/teardown.sh                # drop services and compute pools
 ```
 
 ## Granting another role access to the ingress URLs
@@ -194,18 +203,16 @@ another role in:
 
 ```sql
 USE ROLE ACCOUNTADMIN;
-GRANT USAGE ON DATABASE <SOLUTION_NAME>_BENCH_DB TO ROLE <consumer_role>;
-GRANT USAGE ON SCHEMA <SOLUTION_NAME>_BENCH_DB.SPCS TO ROLE <consumer_role>;
-GRANT SERVICE ROLE <SOLUTION_NAME>_BENCH_DB.SPCS.BENCHMARK_API!ALL_ENDPOINTS_USAGE
+GRANT USAGE ON DATABASE <SOLUTION_NAME>_DB TO ROLE <consumer_role>;
+GRANT USAGE ON SCHEMA <SOLUTION_NAME>_DB.SPCS TO ROLE <consumer_role>;
+GRANT SERVICE ROLE <SOLUTION_NAME>_DB.SPCS.BENCHMARK_API!ALL_ENDPOINTS_USAGE
   TO ROLE <consumer_role>;
-GRANT SERVICE ROLE <SOLUTION_NAME>_BENCH_DB.SPCS.BENCHMARK_LOCUST!ALL_ENDPOINTS_USAGE
+GRANT SERVICE ROLE <SOLUTION_NAME>_DB.SPCS.BENCHMARK_LOCUST!ALL_ENDPOINTS_USAGE
   TO ROLE <consumer_role>;
 ```
 
 ## Troubleshooting
 
-- `snow spcs image-registry login` errors: re-run manually with
-  `--connection $CONNECTION --role $ROLE`; tokens expire after ~1h.
 - Service stuck in `PENDING`: `$SCRIPTS/logs.sh api` (or `locust`)
   — usually a missing grant on the runtime warehouse.
 - Locust shows "0 requests" or logs `gaierror(-2, 'Name or service not known')`:

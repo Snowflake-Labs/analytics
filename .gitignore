@@ -14,11 +14,12 @@ snowflake.log
 .snowflake/
 
 # Local configuration
-.env
-config.env
+*.env
 
 # Plans
 plan-*.md
 
 # macOS
 .DS_Store
+# Local example app (not for commit)
+example_apps/interactive-vs-standard/

@@ -49,18 +49,29 @@ spcs/
 └── specs/               # SPCS service YAML specs
 ```
 
-All SQL is generated inline by the shell scripts from `config.env`; there
-are no separate SQL files to keep in sync.
+All compute pool / image repository / service lifecycle management goes
+through the native `snow spcs compute-pool|image-repository|service`
+subcommands rather than raw `snow sql` — see `_lib.sh`. Plain `snow sql` is
+only used for the handful of things that CLI surface doesn't cover: creating
+the database/schema and resizing the demo warehouses.
 
 ## Prerequisites
 
-- Docker Desktop (or any local buildx-capable daemon).
 - `snow` CLI configured with the connection listed in `config.env` (`PM` by default).
+  `BUILD_METHOD=spcs` requires `snow` CLI >= 3.16.0 (`snow spcs
+  service build-image` doesn't exist before that); 3.18.0+ is recommended —
+  the scripts warn if you're below it. `_lib.sh` checks this automatically.
 - The connection's role must be able to `CREATE COMPUTE POOL`, `CREATE IMAGE
   REPOSITORY`, and `CREATE SERVICE`. `ACCOUNTADMIN` works.
 - The dashboard's runtime role (`DASHBOARD_ROLE`) needs `USAGE` on the TPC-H
   warehouses (`${SOLUTION_NAME}_BENCH_WH_*`) and `SELECT` on the
   `${SOLUTION_NAME}_BENCH_DB.TPCH_SF*_*` schemas.
+- Docker Desktop (or any local buildx-capable daemon) — the default build
+  method (`BUILD_METHOD=docker`) uses `docker build` / `docker push`.
+  If Docker is not available, set `BUILD_METHOD=spcs` in `config.env` to build
+  images server-side with `snow spcs service build-image` — see
+  [Build methods](#build-methods) below. A helper script (`create-eai.sh`) is
+  provided to create the External Access Integration the SPCS build job needs.
 
 ## First-time deploy
 
@@ -153,8 +164,8 @@ Edit the app code (or `spcs/specs/*.yaml`) and run:
 ./update.sh
 ```
 
-`update.sh` rebuilds, pushes, and `ALTER SERVICE`s in place, so the public
-ingress URLs stay the same.
+`update.sh` rebuilds, pushes, and `snow spcs service upgrade`s in place, so
+the public ingress URLs stay the same.
 
 Just want to tweak service resources / env without a rebuild?  Edit the yaml
 under `specs/` and:
@@ -222,10 +233,41 @@ GRANT SERVICE ROLE <SOLUTION_NAME>_BENCH_DB.SPCS.DASHBOARD_LOCUST!ALL_ENDPOINTS_
   TO ROLE <consumer_role>;
 ```
 
+## Build methods
+
+`BUILD_METHOD` in `config.env` controls how `build-and-push.sh` (and
+`update.sh`, `deploy.sh services`) produce the two container images:
+
+- `spcs` — `snow spcs service build-image` uploads the build
+  context to a temp stage and runs the build as a job service on
+  `BUILD_COMPUTE_POOL`, pushing straight to the image repo. No local Docker
+  daemon, no `image-registry login`. This is an experimental `snow` CLI
+  command; the scripts enable its feature flag automatically for the
+  duration of the run. The build job needs internet egress (apt-get, curl,
+  `uv sync` from PyPI) — set `BUILD_EAI_NAME` in `config.env` to one or more
+  space-separated external access integrations the build compute pool's role
+  can use, or the build will fail trying to reach the network. Run
+  `./create-eai.sh` to create the necessary network rule and EAI, then set
+  `BUILD_EAI_NAME` in `config.env` to the integration name it prints.
+- `docker` (default) — the local `docker build --platform linux/amd64` +
+  `docker push` path, useful when you want to build on your own machine (e.g.
+  to compare a local build against the SPCS one) or don't have permission to
+  run `build-image` jobs.
+
 ## Troubleshooting
 
-- `snow spcs image-registry login` errors: re-run it manually with
-  `--connection $CONNECTION --role $ROLE`; tokens expire after ~1h.
+- `snow spcs image-registry login` errors (only relevant for
+  `BUILD_METHOD=docker`): re-run it manually with `--connection $CONNECTION
+  --role $ROLE`; tokens expire after ~1h.
+- `snow spcs service build-image` errors with "no such command" or doesn't
+  show up in `--help`: the experimental feature flag isn't enabled. The
+  scripts set `SNOWFLAKE_CLI_FEATURES_ENABLE_SPCS_BUILD_IMAGE=true`
+  automatically, but you can also add `[cli.features]
+  enable_spcs_build_image = true` to `config.toml` permanently.
+- `snow spcs service build-image` build job fails on `apt-get update`, `curl`,
+  or `uv sync` with a network/DNS error: the build job's compute pool role
+  has no internet egress. Create an external access integration and set
+  `BUILD_EAI_NAME` in `config.env` (space-separated if more than one).
 - Service stuck in `PENDING`: `./logs.sh dashboard` (or `locust-api` /
   `locust`) — usually a missing grant on the runtime warehouse or a Snowflake
   connection error at startup.

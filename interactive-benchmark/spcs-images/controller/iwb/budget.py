@@ -1,0 +1,27 @@
+"""Worst-case controller durations. Dependency-free: the sandbox launcher imports it to outlast the controller."""
+
+STARTED_TIMEOUT_SECONDS = 900
+API_READY_TIMEOUT_SECONDS = 600
+BASELINE_SECONDS = 60
+# Connecting, warehouse setup and teardown.
+OTHER_STEPS_SECONDS = 900
+# Per workload query: history lookups, two compile checks, and three warm-up runs that can each
+# take the interactive warehouse's 5 s timeout.
+SECONDS_PER_QUERY = 20
+# Reading query history grows with the window: up to a few history queries per minute of run.
+MEASURE_SECONDS_PER_RUN_SECOND = 0.5
+
+
+def run_seconds(run_minutes: float) -> int:
+    return max(1, round(run_minutes * 60))
+
+
+def locust_timeout_seconds(run_secs: int, users: int) -> int:
+    """API readiness, the baseline, the run, ramp-up of both phases, and shutdown slack."""
+    return API_READY_TIMEOUT_SECONDS + BASELINE_SECONDS + run_secs + 2 * users + 600
+
+
+def worst_case_seconds(run_secs: int, users: int, queries: int) -> int:
+    # The warehouse is waited on twice: after resume and after attaching tables.
+    return (2 * STARTED_TIMEOUT_SECONDS + locust_timeout_seconds(run_secs, users) + OTHER_STEPS_SECONDS
+            + SECONDS_PER_QUERY * queries + round(MEASURE_SECONDS_PER_RUN_SECOND * run_secs))

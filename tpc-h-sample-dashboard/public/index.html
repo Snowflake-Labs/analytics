@@ -3,170 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TPC-H Benchmark — Interactive Tables Demo</title>
+    <title>TPC-H Benchmark — Zero-Copy Interactive Demo</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html { height: 100%; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f1117;
-            color: #e0e0e0;
-            padding: 24px;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-        h1 { font-size: 1.6rem; margin-bottom: 8px; color: #fff; }
-        .subtitle { font-size: 0.85rem; color: #888; margin-bottom: 24px; }
-        .subtitle span { color: #29b5e8; font-weight: 600; }
-        .kpi-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        .panel { position: relative; }
-        .loading-overlay {
-            display: none;
-            position: absolute;
-            inset: 0;
-            z-index: 10;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            background: rgba(15, 17, 23, 0.78);
-            border-radius: 12px;
-            color: #aaa;
-            font-size: 0.8rem;
-            pointer-events: none;
-        }
-        .panel.is-loading .loading-overlay { display: flex; }
-        .spinner {
-            width: 18px;
-            height: 18px;
-            border: 2px solid #2a2d37;
-            border-top-color: #29b5e8;
-            border-radius: 50%;
-            animation: spin 0.7s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .latest-panel-body { position: relative; max-height: 280px; overflow-y: auto; }
-        .kpi-card {
-            background: #1a1d27;
-            border-radius: 12px;
-            padding: 20px;
-            border: 1px solid #2a2d37;
-        }
-        .kpi-card .label { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
-        .kpi-card .value { font-size: 1.8rem; font-weight: 700; color: #fff; margin-top: 4px; }
-        .kpi-card .value.accent { color: #29b5e8; }
-        .kpi-card .value.green { color: #4caf50; }
-        .kpi-card .value.orange { color: #ff9800; }
-        .charts-grid {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 16px;
-            margin-bottom: 24px;
-            min-height: 280px;
-        }
-        .charts-grid.charts-grid--segment-filtered { grid-template-columns: 1fr; }
-        .charts-grid.charts-grid--segment-filtered .chart-card--segment-breakdown { display: none; }
-        .chart-card {
-            background: #1a1d27;
-            border-radius: 12px;
-            padding: 20px;
-            border: 1px solid #2a2d37;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        .chart-card h3 { font-size: 0.85rem; color: #aaa; margin-bottom: 12px; flex-shrink: 0; }
-        .chart-card .chart-wrap { flex: 1; position: relative; min-height: 220px; }
-        .chart-card canvas { position: absolute; top: 0; left: 0; width: 100% !important; height: 100% !important; }
-        .bottom-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #2a2d37; }
-        th { color: #888; font-weight: 500; text-transform: uppercase; font-size: 0.7rem; }
-        .status-F { color: #4caf50; }
-        .status-O { color: #ff9800; }
-        .status-P { color: #29b5e8; }
-        .status-bar {
-            position: fixed; top: 16px; right: 24px;
-            font-size: 0.7rem; color: #888;
-            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-            justify-content: flex-end; max-width: 55%;
-        }
-        .wh-toggle { display: flex; align-items: center; gap: 6px; }
-        .wh-toggle label {
-            cursor: pointer; padding: 3px 8px; border-radius: 4px;
-            border: 1px solid #333; color: #666; transition: all 0.2s;
-        }
-        .wh-toggle label.active {
-            border-color: #29b5e8; color: #29b5e8; background: rgba(41,181,232,0.1);
-        }
-        .wh-toggle input { display: none; }
-        .toolbar {
-            display: flex; align-items: center; flex-wrap: wrap;
-            gap: 10px 16px; margin-bottom: 20px;
-        }
-        .toolbar label { font-size: 0.8rem; color: #888; }
-        .toolbar select {
-            background: #1a1d27; color: #e0e0e0;
-            border: 1px solid #2a2d37; border-radius: 8px;
-            padding: 8px 12px; min-width: 160px; font-size: 0.85rem;
-        }
-        .toolbar select:disabled { opacity: 0.55; cursor: wait; }
-        .toolbar .hint { font-size: 0.75rem; color: #666; max-width: 520px; line-height: 1.35; }
-        @media (max-width: 900px) {
-            .charts-grid, .bottom-grid { grid-template-columns: 1fr; }
-            .status-bar { position: static; max-width: 100%; margin-bottom: 16px; }
-        }
-    </style>
+    <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
     <div class="status-bar">
         <div class="wh-toggle">
-            <label id="lbl-interactive" class="active" onclick="setWarehouse('interactive')">Interactive WH</label>
-            <label id="lbl-standard" onclick="setWarehouse('standard')">Standard WH</label>
+            <label id="lbl-interactive" class="active">Interactive WH</label>
+            <label id="lbl-standard">Standard WH</label>
         </div>
-        <span>Queries: <span id="stat-count">0</span> | Client Avg: <span id="stat-avg">—</span>ms Min: <span id="stat-min">—</span>ms Max: <span id="stat-max">—</span>ms | Query Avg: <span id="stat-qavg">—</span>ms Min: <span id="stat-qmin">—</span>ms Max: <span id="stat-qmax">—</span>ms</span>
+        <span>Queries: <span id="stat-count">0</span> | Client Avg: <span id="stat-avg">&mdash;</span>ms Min: <span id="stat-min">&mdash;</span>ms Max: <span id="stat-max">&mdash;</span>ms | Query Avg: <span id="stat-qavg">&mdash;</span>ms Min: <span id="stat-qmin">&mdash;</span>ms Max: <span id="stat-qmax">&mdash;</span>ms</span>
+    </div>
+
+    <div class="ready-banner" id="ready-banner">
+        <span class="spinner"></span>
+        <span id="ready-msg">Waiting for API service to be ready&hellip;</span>
     </div>
 
     <h1>TPC-H Benchmark Dashboard</h1>
     <p class="subtitle">
-        <span>IW_TPCH_BENCH</span> — compare <span>Interactive Tables</span> + <span>Interactive Warehouse</span>
-        vs <span>Standard Tables</span> on the TPC-H workload
+        <span>IW_TPCH_BENCH</span> &mdash; compare <span>Zero-Copy Interactive Warehouse</span>
+        vs <span>Standard Warehouse</span> on the TPC-H workload
     </p>
+
+    <div class="locust-panel" id="locust-panel">
+        <div class="locust-row">
+            <label>Load Test</label>
+            <label for="locust-users">Users</label>
+            <input type="number" id="locust-users" value="10" min="1" max="500">
+            <label for="locust-spawn">Spawn rate</label>
+            <input type="number" id="locust-spawn" value="5" min="1" max="200">
+            <button class="locust-btn locust-btn--start" id="locust-start">Start</button>
+            <button class="locust-btn locust-btn--stop" id="locust-stop" disabled>Stop</button>
+            <div class="locust-stats">
+                <span>Status: <span id="locust-state" class="locust-state locust-state--stopped">stopped</span></span>
+                <span>Concurrent Users: <span class="locust-val" id="locust-user-count">0</span></span>
+                <span>RPS: <span class="locust-val" id="locust-rps">0</span></span>
+            </div>
+        </div>
+    </div>
 
     <div class="toolbar">
         <label for="scale-select">Scale factor</label>
-        <select id="scale-select" title="TPC-H scale factor (SF1–SF1000)">
+        <select id="scale-select" title="TPC-H scale factor (SF1&ndash;SF1000)">
             <option value="1">SF1 (1 GB)</option>
             <option value="10" selected>SF10 (10 GB)</option>
             <option value="100">SF100 (100 GB)</option>
             <option value="1000">SF1000 (1 TB)</option>
         </select>
         <label for="segment-filter">Market segment</label>
-        <select id="segment-filter" title="Filter orders by customer market segment — exercises selective scans on clustered keys.">
+        <select id="segment-filter" title="Filter orders by customer market segment.">
             <option value="">All segments</option>
+        </select>
+        <label for="lookback-select">Lookback</label>
+        <select id="lookback-select" title="Number of days to look back from the most recent ship date">
+            <option value="15">15 days</option>
+            <option value="30">30 days</option>
+            <option value="90" selected>90 days</option>
+            <option value="180">180 days</option>
         </select>
         <span class="hint">Toggle warehouses to compare live query latency on the same TPC-H tables and schema.</span>
     </div>
 
     <div class="kpi-row panel" data-panel="kpis">
         <div class="loading-overlay" aria-hidden="true"><span class="spinner"></span>Loading</div>
-        <div class="kpi-card"><div class="label">Total Orders</div><div class="value accent" id="kpi-orders">—</div></div>
-        <div class="kpi-card"><div class="label">Revenue (M)</div><div class="value" id="kpi-revenue">—</div></div>
-        <div class="kpi-card"><div class="label">Customers</div><div class="value orange" id="kpi-customers">—</div></div>
-        <div class="kpi-card"><div class="label">Line Items</div><div class="value" id="kpi-lineitems">—</div></div>
-        <div class="kpi-card"><div class="label">Avg Order Value</div><div class="value green" id="kpi-aov">—</div></div>
+        <div class="kpi-card"><div class="label">Total Orders</div><div class="value accent" id="kpi-orders">&mdash;</div></div>
+        <div class="kpi-card"><div class="label">Revenue (M)</div><div class="value" id="kpi-revenue">&mdash;</div></div>
+        <div class="kpi-card"><div class="label">Customers</div><div class="value orange" id="kpi-customers">&mdash;</div></div>
+        <div class="kpi-card"><div class="label">Line Items</div><div class="value" id="kpi-lineitems">&mdash;</div></div>
+        <div class="kpi-card"><div class="label">Avg Order Value</div><div class="value green" id="kpi-aov">&mdash;</div></div>
     </div>
 
     <div class="charts-grid" id="charts-grid">
@@ -200,302 +107,6 @@
         </div>
     </div>
 
-    <script>
-        const COLORS = ['#29b5e8','#ff6384','#ffce56','#4caf50','#9c27b0','#ff9800','#00bcd4','#e91e63'];
-        let ordersChart, segmentChart, regionChart;
-        const latencies = [];
-        const queryTimes = [];
-        let currentWarehouse = 'interactive';
-        let currentScale = '10';
-        let currentSegment = '';
-        let fetchGeneration = 0;
-        let segmentsGeneration = 0;
-
-        function resetStatsDisplay() {
-            document.getElementById('stat-count').textContent = '0';
-            document.getElementById('stat-avg').textContent = '—';
-            document.getElementById('stat-min').textContent = '—';
-            document.getElementById('stat-max').textContent = '—';
-            document.getElementById('stat-qavg').textContent = '—';
-            document.getElementById('stat-qmin').textContent = '—';
-            document.getElementById('stat-qmax').textContent = '—';
-        }
-
-        function panelsForFetch() {
-            const panels = ['kpis', 'orders-time', 'region', 'latest'];
-            if (!currentSegment) panels.splice(2, 0, 'segment');
-            return panels;
-        }
-
-        function setPanelsLoading(loading, panels = panelsForFetch()) {
-            for (const id of panels) {
-                document.querySelector(`[data-panel="${id}"]`)?.classList.toggle('is-loading', loading);
-            }
-        }
-
-        function initCharts() {
-            const commonOpts = {
-                responsive: true,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { grid: { color: '#2a2d37' }, ticks: { color: '#888', font: { size: 10 } } },
-                    y: { grid: { color: '#2a2d37' }, ticks: { color: '#888', font: { size: 10 } } }
-                }
-            };
-
-            ordersChart = new Chart(document.getElementById('ordersChart'), {
-                type: 'line',
-                data: { labels: [], datasets: [
-                    { label: 'Orders', data: [], borderColor: '#29b5e8', backgroundColor: 'rgba(41,181,232,0.1)', fill: true, tension: 0.3, pointRadius: 0 },
-                    { label: 'Revenue', data: [], borderColor: '#4caf50', backgroundColor: 'rgba(76,175,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y1' }
-                ]},
-                options: {
-                    ...commonOpts,
-                    maintainAspectRatio: false,
-                    animation: false,
-                    plugins: { legend: { display: true, labels: { color: '#888', font: { size: 10 } } } },
-                    scales: {
-                        ...commonOpts.scales,
-                        x: { ...commonOpts.scales.x, type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } } },
-                        y: { ...commonOpts.scales.y, position: 'left', title: { display: true, text: 'Orders', color: '#888' } },
-                        y1: { ...commonOpts.scales.y, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Revenue', color: '#888' } }
-                    }
-                }
-            });
-
-            segmentChart = new Chart(document.getElementById('segmentChart'), {
-                type: 'doughnut',
-                data: { labels: [], datasets: [{ data: [], backgroundColor: COLORS, borderWidth: 0 }] },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: false,
-                    plugins: { legend: { position: 'right', labels: { color: '#ccc', font: { size: 10 }, padding: 8 } } },
-                },
-            });
-
-            regionChart = new Chart(document.getElementById('regionChart'), {
-                type: 'bar',
-                data: { labels: [], datasets: [{ label: 'Orders', data: [], backgroundColor: COLORS.slice(0, 5), borderRadius: 4 }] },
-                options: { ...commonOpts, maintainAspectRatio: false, animation: false, indexAxis: 'y' }
-            });
-        }
-
-        function apiParams() {
-            const p = new URLSearchParams();
-            p.set('warehouse', currentWarehouse);
-            p.set('scale', currentScale);
-            if (currentSegment) p.set('segment', currentSegment);
-            return p;
-        }
-
-        function clearSegmentOptions() {
-            const sel = document.getElementById('segment-filter');
-            sel.querySelectorAll('option:not(:first-child)').forEach((o) => o.remove());
-            sel.value = '';
-        }
-
-        async function loadSegments() {
-            const gen = ++segmentsGeneration;
-            const warehouse = currentWarehouse;
-            const scale = currentScale;
-            const sel = document.getElementById('segment-filter');
-            sel.disabled = true;
-            try {
-                const p = new URLSearchParams();
-                p.set('warehouse', warehouse);
-                p.set('scale', scale);
-                const res = await fetch(`/api/segments?${p}`, { cache: 'no-store' });
-                const names = await res.json();
-                if (gen !== segmentsGeneration) return;
-                if (warehouse !== currentWarehouse || scale !== currentScale) return;
-                clearSegmentOptions();
-                for (const name of names) {
-                    const o = document.createElement('option');
-                    o.value = name;
-                    o.textContent = name;
-                    sel.appendChild(o);
-                }
-                if (currentSegment && names.includes(currentSegment)) {
-                    sel.value = currentSegment;
-                } else {
-                    sel.value = '';
-                    currentSegment = '';
-                }
-            } finally {
-                if (gen === segmentsGeneration) sel.disabled = false;
-            }
-        }
-
-        async function refreshDashboard(reloadSegments, resetSegment) {
-            if (resetSegment) {
-                currentSegment = '';
-                clearSegmentOptions();
-                updateChartsLayout();
-            }
-            latencies.length = 0;
-            queryTimes.length = 0;
-            resetStatsDisplay();
-            const gen = ++fetchGeneration;
-            setPanelsLoading(true);
-            if (reloadSegments) await loadSegments();
-            if (gen !== fetchGeneration) return;
-            fetchData(gen);
-        }
-
-        function setWarehouse(wh) {
-            const warehouseChanged = wh !== currentWarehouse;
-            currentWarehouse = wh;
-            document.getElementById('lbl-interactive').className = wh === 'interactive' ? 'active' : '';
-            document.getElementById('lbl-standard').className = wh === 'standard' ? 'active' : '';
-            void refreshDashboard(true, warehouseChanged);
-        }
-
-        function setScale(scale) {
-            if (scale === currentScale) return;
-            currentScale = scale;
-            void refreshDashboard(true, true);
-        }
-
-        async function timedFetch(path) {
-            const u = new URL(path, window.location.origin);
-            const params = apiParams();
-            for (const [k, v] of params) u.searchParams.set(k, v);
-            const start = performance.now();
-            const res = await fetch(u.pathname + u.search);
-            const data = await res.json();
-            latencies.push(performance.now() - start);
-            const qt = res.headers.get('X-Query-Time-Ms');
-            if (qt) queryTimes.push(Number(qt));
-            return data;
-        }
-
-        function updateChartsLayout() {
-            const grid = document.getElementById('charts-grid');
-            grid.classList.toggle('charts-grid--segment-filtered', Boolean(currentSegment));
-            requestAnimationFrame(() => {
-                [ordersChart, segmentChart, regionChart].forEach((c) => c?.resize());
-            });
-        }
-
-        function updateStats() {
-            if (latencies.length === 0) {
-                resetStatsDisplay();
-                return;
-            }
-            const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-            document.getElementById('stat-count').textContent = latencies.length;
-            document.getElementById('stat-avg').textContent = Math.round(avg);
-            document.getElementById('stat-min').textContent = Math.round(Math.min(...latencies));
-            document.getElementById('stat-max').textContent = Math.round(Math.max(...latencies));
-            if (queryTimes.length > 0) {
-                const qavg = queryTimes.reduce((a, b) => a + b, 0) / queryTimes.length;
-                document.getElementById('stat-qavg').textContent = Math.round(qavg);
-                document.getElementById('stat-qmin').textContent = Math.round(Math.min(...queryTimes));
-                document.getElementById('stat-qmax').textContent = Math.round(Math.max(...queryTimes));
-            }
-        }
-
-        function statusClass(status) {
-            const s = (status || '').toUpperCase();
-            if (s === 'F') return 'status-F';
-            if (s === 'O') return 'status-O';
-            return 'status-P';
-        }
-
-        function formatRevenueMillions(value) {
-            const millions = Number(value || 0) / 1e6;
-            return '$' + millions.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'M';
-        }
-
-        async function fetchData(expectedGen) {
-            const gen = expectedGen ?? ++fetchGeneration;
-            const panels = panelsForFetch();
-            setPanelsLoading(true, panels);
-            try {
-                const [timeData, kpis, segments, regions, latest, tableStats] = await Promise.all([
-                    timedFetch('/api/orders-over-time'),
-                    timedFetch('/api/kpis'),
-                    currentSegment ? Promise.resolve(null) : timedFetch('/api/by-segment'),
-                    timedFetch('/api/by-region'),
-                    timedFetch('/api/latest-orders'),
-                    timedFetch('/api/table-stats'),
-                ]);
-
-                if (gen !== fetchGeneration) return;
-
-                const suffix = currentSegment ? ` — ${currentSegment}` : '';
-                document.getElementById('h-orders-time').textContent = `Orders & Revenue Over Time — last 7 days (SF${currentScale})` + suffix;
-                document.getElementById('h-by-region').textContent = `Orders by Region (SF${currentScale})` + suffix;
-                document.getElementById('h-latest').textContent = `Latest Orders (SF${currentScale})` + suffix;
-
-                document.getElementById('kpi-orders').textContent = (kpis.TOTAL_ORDERS || 0).toLocaleString();
-                document.getElementById('kpi-revenue').textContent = formatRevenueMillions(kpis.TOTAL_REVENUE);
-                document.getElementById('kpi-customers').textContent = (kpis.TOTAL_CUSTOMERS || 0).toLocaleString();
-                document.getElementById('kpi-lineitems').textContent = (kpis.TOTAL_LINE_ITEMS || 0).toLocaleString();
-                document.getElementById('kpi-aov').textContent = '$' + Number(kpis.AVG_ORDER_VALUE || 0).toFixed(2);
-
-                ordersChart.data.labels = timeData.map((r) => r.ORDER_DAY);
-                ordersChart.data.datasets[0].data = timeData.map((r) => r.TOTAL_ORDERS);
-                ordersChart.data.datasets[1].data = timeData.map((r) => r.TOTAL_REVENUE);
-                ordersChart.update('none');
-
-                if (segments) {
-                    segmentChart.data.labels = segments.map((r) => r.MARKET_SEGMENT);
-                    segmentChart.data.datasets[0].data = segments.map((r) => r.REVENUE);
-                    segmentChart.update('none');
-                }
-
-                regionChart.data.labels = regions.map((r) => r.REGION);
-                regionChart.data.datasets[0].data = regions.map((r) => r.ORDER_COUNT);
-                regionChart.update('none');
-
-                const tbody = document.querySelector('#latestTable tbody');
-                tbody.innerHTML = latest.map((r) => `
-                    <tr>
-                        <td>${r.ORDER_DATE ? new Date(r.ORDER_DATE).toLocaleDateString() : '—'}</td>
-                        <td class="${statusClass(r.STATUS)}">${r.STATUS || '—'}</td>
-                        <td>$${Number(r.TOTAL_AMOUNT).toFixed(2)}</td>
-                        <td>${r.MARKET_SEGMENT || '—'}</td>
-                        <td>${r.REGION || '—'}</td>
-                    </tr>
-                `).join('');
-            } catch (err) {
-                console.error('Fetch error:', err);
-            } finally {
-                if (gen === fetchGeneration) setPanelsLoading(false, panels);
-            }
-            updateStats();
-            updateChartsLayout();
-        }
-
-        async function initDashboard() {
-            try {
-                const res = await fetch('/api/config');
-                const cfg = await res.json();
-                if (cfg.defaultScale && document.getElementById('scale-select').querySelector(`option[value="${cfg.defaultScale}"]`)) {
-                    currentScale = cfg.defaultScale;
-                    document.getElementById('scale-select').value = cfg.defaultScale;
-                }
-            } catch (err) {
-                console.warn('Could not load config:', err);
-            }
-            await loadSegments();
-            await fetchData();
-        }
-
-        initCharts();
-        document.getElementById('scale-select').addEventListener('change', (e) => setScale(e.target.value));
-        document.getElementById('segment-filter').addEventListener('change', (e) => {
-            currentSegment = e.target.value;
-            latencies.length = 0;
-            queryTimes.length = 0;
-            resetStatsDisplay();
-            updateChartsLayout();
-            const gen = ++fetchGeneration;
-            fetchData(gen);
-        });
-        initDashboard();
-    </script>
+    <script src="/static/dashboard.js"></script>
 </body>
 </html>

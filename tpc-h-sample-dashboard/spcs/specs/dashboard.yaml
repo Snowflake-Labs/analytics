@@ -16,6 +16,7 @@ spec:
         POOL_SIZE: "${DASHBOARD_POOL_SIZE}"
         POOL_WARMUP: "${DASHBOARD_POOL_WARMUP}"
         POOL_ACQUIRE_TIMEOUT: "${DASHBOARD_POOL_ACQUIRE_TIMEOUT}"
+        LOCUST_URL: "${DASHBOARD_LOCUST_URL}"
       resources:
         requests:
           memory: "${DASHBOARD_MEMORY_REQUEST}"

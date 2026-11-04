@@ -66,7 +66,8 @@ Route to the matching section below.
 **Actions:**
 
 1. Ask the user:
-   - Target: `interactive` (default) or `standard`
+   - Warehouse type: `interactive` (default) or `standard`
+   - Tables type: `standard` (default), `interactive`, or `iceberg` (iceberg only if it was set up)
    - Scale: 1, 10, 100, or 1000
    - Workload: `original` (standard SQL) or `modern` (window functions, QUALIFY)
    - Specific queries (optional): comma-separated list like `2,11,15`
@@ -75,22 +76,24 @@ Route to the matching section below.
 2. Run the benchmark:
    ```bash
    cd <REPO_ROOT>/tpc-h && ./iwtpch.sh run \
-     --target <TARGET> \
+     --warehouse-type <WAREHOUSE_TYPE> \
+     --tables-type <TABLES_TYPE> \
      --scale <SCALE> \
      --workload <WORKLOAD>
    ```
 
    Optional flags:
    - `--queries 2,11,15` — run only specific queries
+   - `--avg` — report the average of the repeats (after one warm-up run) instead of the best
    - `--repeats 5` — best of N executions per query
    - `--iterations 3` — full workload passes
 
-3. Results are saved to `tpc-h/results/run_<target>_sf<scale>_<workload>_<timestamp>.json` and `.csv`.
+3. Results are saved to `tpc-h/results/run_<warehouse_type>-<tables_type>_sf<scale>_<workload>_<timestamp>.json` and `.csv`.
 
 **Typical comparison flow:**
 ```bash
-./iwtpch.sh run --target interactive --scale 10 --workload original
-./iwtpch.sh run --target standard --scale 10 --workload original
+./iwtpch.sh run --warehouse-type interactive --tables-type interactive --scale 10 --workload original
+./iwtpch.sh run --warehouse-type standard --tables-type standard --scale 10 --workload original
 ```
 
 At SF1, result validation automatically checks against reference values in `tpc-h-results-1GB.json`.
@@ -99,10 +102,12 @@ At SF1, result validation automatically checks against reference values in `tpc-
 
 ### Teardown
 
-**TPC-H resources** (drops warehouses for a specific scale):
+**TPC-H resources** for one scale. By default this drops the warehouses **and** the standard, interactive, and iceberg table schemas for that scale; the database is kept unless `--drop-database` is passed:
 ```bash
 cd <REPO_ROOT>/tpc-h && ./iwtpch.sh teardown --scale <SCALE>
 ```
+
+To drop less, pass `--tables-type <standard|interactive|iceberg>` and/or `--warehouse-type <standard|interactive>`.
 
 ---
 

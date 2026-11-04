@@ -1,6 +1,6 @@
-# Interactive Tables Dashboard
+# Zero-Copy Interactive Dashboard
 
-A sample dashboard that benchmarks Snowflake **Interactive Tables + Interactive Warehouse** against **Standard Tables** using TPC-H workloads. The dashboard displays live KPIs and charts, while a Locust-based load test simulates concurrent dashboard users to measure query latency under load.
+A sample dashboard that benchmarks Snowflake **Zero-Copy Interactive Warehouse** against a **Standard Warehouse** using TPC-H workloads. Both warehouse types query the same standard tables — the performance difference comes from the warehouse type, not from separate table copies. The dashboard displays live KPIs and charts, while a Locust-based load test simulates concurrent dashboard users to measure query latency under load.
 
 ## Repository Structure
 
@@ -15,7 +15,7 @@ dashboard/
 
 ### `api/`
 
-FastAPI server that connects to Snowflake and exposes REST endpoints consumed by the dashboard UI. It routes queries to either an Interactive Warehouse or a Standard Warehouse depending on the selected mode.
+FastAPI server that connects to Snowflake and exposes REST endpoints consumed by the dashboard UI. It routes queries to either a Zero-Copy Interactive Warehouse or a Standard Warehouse depending on the selected mode. Both targets query the same schema.
 
 ### `public/`
 
@@ -23,7 +23,7 @@ Static HTML/JS frontend with Chart.js visualizations: KPI cards, time-series lin
 
 ### `sql/`
 
-Contains `create_lineitem_dashboard.sql` which builds the denormalized `LINEITEM_DASHBOARD` table (joining LINEITEM, ORDERS, CUSTOMER, NATION, REGION) in both a standard schema and an interactive-table schema.
+Contains `create_lineitem_dashboard.sql` which builds the denormalized `LINEITEM_DASHBOARD` table (joining LINEITEM, ORDERS, CUSTOMER, NATION, REGION) in the standard schema.
 
 ### `locust/`
 
@@ -52,8 +52,7 @@ Everything needed to deploy the dashboard and load test to Snowpark Container Se
    | Database | `<SOLUTION_NAME>_BENCH_DB` |
    | Standard warehouse | `<SOLUTION_NAME>_BENCH_WH_STD_<scale>` |
    | Interactive warehouse | `<SOLUTION_NAME>_BENCH_WH_INT_<scale>` |
-   | Standard schema | `TPCH_SF<scale>` |
-   | Interactive schema | `TPCH_SF<scale>_IT` |
+   | Schema (both targets) | `TPCH_SF<scale>` |
 
 2. Start the server:
 

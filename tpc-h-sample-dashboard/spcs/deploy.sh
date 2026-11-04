@@ -91,89 +91,36 @@ EOF
 # Action: services
 # ---------------------------------------------------------------------------
 deploy_services() {
-  echo "==> [1/6] Setting up database, schema, compute pools, image repo"
+  echo "==> [1/7] Setting up database and schema"
   snow_sql_run "prerequisites setup" <<EOF
 USE ROLE $ROLE;
 USE WAREHOUSE $DEPLOY_WAREHOUSE;
 
 CREATE DATABASE IF NOT EXISTS $DB;
-USE DATABASE $DB;
-
-CREATE SCHEMA IF NOT EXISTS $SCHEMA;
-USE SCHEMA $SCHEMA;
-
-CREATE COMPUTE POOL IF NOT EXISTS $DASHBOARD_COMPUTE_POOL
-  MIN_NODES = $DASHBOARD_MIN_NODES
-  MAX_NODES = $DASHBOARD_MAX_NODES
-  INSTANCE_FAMILY = $DASHBOARD_INSTANCE_FAMILY
-  AUTO_RESUME = TRUE;
-
-ALTER COMPUTE POOL $DASHBOARD_COMPUTE_POOL RESUME IF SUSPENDED;
-
-CREATE COMPUTE POOL IF NOT EXISTS $LOCUST_COMPUTE_POOL
-  MIN_NODES = $LOCUST_MIN_NODES
-  MAX_NODES = $LOCUST_MAX_NODES
-  INSTANCE_FAMILY = $LOCUST_INSTANCE_FAMILY
-  AUTO_RESUME = TRUE;
-
-ALTER COMPUTE POOL $LOCUST_COMPUTE_POOL RESUME IF SUSPENDED;
-
-CREATE IMAGE REPOSITORY IF NOT EXISTS $IMAGE_REPO;
+CREATE SCHEMA IF NOT EXISTS $DB.$SCHEMA;
 EOF
 
-  echo "==> [2/6] Building and pushing container images"
+  echo "==> [2/7] Creating compute pools and image repository"
+  spcs_compute_pool_create "$DASHBOARD_COMPUTE_POOL" "$DASHBOARD_INSTANCE_FAMILY" \
+    "$DASHBOARD_MIN_NODES" "$DASHBOARD_MAX_NODES"
+  spcs_compute_pool_create "$LOCUST_COMPUTE_POOL" "$LOCUST_INSTANCE_FAMILY" \
+    "$LOCUST_MIN_NODES" "$LOCUST_MAX_NODES"
+  spcs_image_repo_create "$IMAGE_REPO"
+
+  echo "==> [3/7] Building and pushing container images"
   "$SCRIPT_DIR/build-and-push.sh"
 
-  deploy_service() {
-    local svc="$1"
-    local spec_file="$2"
-    local pool="$3"
-    local min_inst="${4:-1}"
-    local max_inst="${5:-1}"
-
-    local rendered
-    rendered="$(render_spec "$spec_file")"
-
-    echo "==> Rendered spec for $svc (pool=$pool, min=$min_inst, max=$max_inst):"
-    echo "----"
-    echo "$rendered" | sed 's/^/    /'
-    echo "----"
-
-    snow_sql_run "deploy service $svc" <<EOF
-USE ROLE $ROLE;
-USE DATABASE $DB;
-USE SCHEMA $SCHEMA;
-
-CREATE SERVICE IF NOT EXISTS $svc
-  IN COMPUTE POOL $pool
-  FROM SPECIFICATION \$\$
-$rendered
-\$\$
-  MIN_INSTANCES = $min_inst
-  MAX_INSTANCES = $max_inst
-  COMMENT = 'Managed by dashboard/spcs/';
-
-ALTER SERVICE $svc FROM SPECIFICATION \$\$
-$rendered
-\$\$;
-
-ALTER SERVICE $svc SET
-  MIN_INSTANCES = $min_inst
-  MAX_INSTANCES = $max_inst;
-EOF
-  }
-
-  echo "==> [3/6] Deploying dashboard API service ($DASHBOARD_SERVICE) on pool $DASHBOARD_COMPUTE_POOL"
-  deploy_service "$DASHBOARD_SERVICE" "$SCRIPT_DIR/specs/dashboard.yaml" "$DASHBOARD_COMPUTE_POOL" \
+  echo "==> [4/7] Deploying dashboard API service ($DASHBOARD_SERVICE) on pool $DASHBOARD_COMPUTE_POOL"
+  spcs_service_upsert "$DASHBOARD_SERVICE" "$DASHBOARD_COMPUTE_POOL" "$SCRIPT_DIR/specs/dashboard.yaml" \
     "$DASHBOARD_MIN_INSTANCES" "$DASHBOARD_MAX_INSTANCES"
 
-  echo "==> [4/6] Deploying isolated API server for locust ($LOCUST_API_SERVICE) on pool $LOCUST_COMPUTE_POOL"
-  deploy_service "$LOCUST_API_SERVICE" "$SCRIPT_DIR/specs/dashboard.yaml" "$LOCUST_COMPUTE_POOL" 1 1
+  echo "==> [5/7] Deploying isolated API server for locust ($LOCUST_API_SERVICE) on pool $LOCUST_COMPUTE_POOL"
+  spcs_service_upsert "$LOCUST_API_SERVICE" "$LOCUST_COMPUTE_POOL" "$SCRIPT_DIR/specs/dashboard.yaml" 1 1
 
-  echo "==> [5/6] Deploying locust service ($LOCUST_SERVICE) on pool $LOCUST_COMPUTE_POOL"
-  deploy_service "$LOCUST_SERVICE" "$SCRIPT_DIR/specs/locust.yaml" "$LOCUST_COMPUTE_POOL" 1 1
+  echo "==> [6/7] Deploying locust service ($LOCUST_SERVICE) on pool $LOCUST_COMPUTE_POOL"
+  spcs_service_upsert "$LOCUST_SERVICE" "$LOCUST_COMPUTE_POOL" "$SCRIPT_DIR/specs/locust.yaml" 1 1
 
-  echo "==> [6/6] Waiting for services to become READY (this can take a few minutes)"
+  echo "==> [7/7] Waiting for services to become READY (this can take a few minutes)"
   "$SCRIPT_DIR/status.sh" --wait
 
   echo

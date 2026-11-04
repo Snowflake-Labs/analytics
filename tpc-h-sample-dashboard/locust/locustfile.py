@@ -27,6 +27,7 @@ from locust import HttpUser, between, events, task
 
 WAREHOUSES = ["interactive", "standard"]
 SCALES = ["1", "10", "100", "1000"]
+LOOKBACK_DAYS = ["15", "30", "90", "180"]
 
 
 @events.init_command_line_parser.add_listener
@@ -51,6 +52,15 @@ def _register_cli_args(parser):
         include_in_web_ui=True,
         help="TPC-H scale factor",
     )
+    parser.add_argument(
+        "--lookback",
+        type=str,
+        choices=LOOKBACK_DAYS,
+        default=os.environ.get("LOOKBACK", "90"),
+        env_var="LOOKBACK",
+        include_in_web_ui=True,
+        help="Lookback window in days",
+    )
 
 
 DASHBOARD_ENDPOINTS = (
@@ -68,20 +78,23 @@ class DashboardUser(HttpUser):
 
     wait_time = between(0.8, 2.0)
 
-    def _resolve_options(self) -> tuple[str, str]:
-        """Read warehouse/scale from parsed CLI / web-UI options.  Falls back
+    def _resolve_options(self) -> tuple[str, str, str]:
+        """Read warehouse/scale/lookback from parsed CLI / web-UI options.  Falls back
         to env vars if parsed_options isn't available (very old locust)."""
         opts = getattr(self.environment, "parsed_options", None)
         wh = getattr(opts, "warehouse", None) or os.environ.get("WAREHOUSE", "interactive")
         sc = getattr(opts, "scale", None) or os.environ.get("SCALE", "100")
+        lb = getattr(opts, "lookback", None) or os.environ.get("LOOKBACK", "90")
         if wh not in WAREHOUSES:
             wh = "interactive"
         if sc not in SCALES:
             sc = "100"
-        return wh, sc
+        if lb not in LOOKBACK_DAYS:
+            lb = "90"
+        return wh, sc, lb
 
     def on_start(self) -> None:
-        self.warehouse, self.scale = self._resolve_options()
+        self.warehouse, self.scale, self.lookback = self._resolve_options()
         self.segment = ""
         self.segments: list[str] = []
 
@@ -103,7 +116,7 @@ class DashboardUser(HttpUser):
                 self.segments = [s for s in body if s]
 
     def _params(self, segment: str | None = None) -> dict[str, str]:
-        params = {"warehouse": self.warehouse, "scale": self.scale}
+        params = {"warehouse": self.warehouse, "scale": self.scale, "lookback": self.lookback}
         seg = self.segment if segment is None else segment
         if seg:
             params["segment"] = seg

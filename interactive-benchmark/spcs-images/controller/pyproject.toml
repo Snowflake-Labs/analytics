@@ -1,0 +1,20 @@
+[project]
+name = "benchmark-controller"
+version = "0.1.0"
+description = "One-shot controller that sets up and runs an interactive warehouse benchmark"
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.20",
+    "snowflake-connector-python[secure-local-storage]>=3.12",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true

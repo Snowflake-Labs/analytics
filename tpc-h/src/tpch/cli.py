@@ -48,19 +48,34 @@ def build_parser() -> argparse.ArgumentParser:
     setup_p.add_argument(
         "--tables-type",
         choices=(*TABLE_TYPES, "all"),
-        default="all",
-        help="Table format to set up: standard, interactive, iceberg, or all (default all)",
+        default=None,
+        help="Table format to set up: standard, interactive, iceberg, or all "
+        "(default all; with --save-to-snowflake, none unless specified)",
     )
     setup_p.add_argument(
         "--warehouse-type",
         choices=(*WAREHOUSE_TYPES, "all"),
-        default="all",
-        help="Warehouse type to create: standard, interactive, or all (default all)",
+        default=None,
+        help="Warehouse type to create: standard, interactive, or all "
+        "(default all; with --save-to-snowflake, none unless specified)",
     )
     setup_p.add_argument(
         "--target-file-size",
         default="AUTO",
         help="TARGET_FILE_SIZE for iceberg tables (default AUTO)",
+    )
+    setup_p.add_argument(
+        "--save-to-snowflake",
+        action="store_true",
+        default=False,
+        help="Also create the hybrid table used to store benchmark results (TPCH_RESULTS.BENCHMARK_RUNS)",
+    )
+    setup_p.add_argument(
+        "--recreate-results-table",
+        action="store_true",
+        default=False,
+        help="Drop and recreate the results hybrid table and its sequence (implies "
+        "--save-to-snowflake; existing results are lost)",
     )
     _add_connection_arg(setup_p)
     _add_solution_arg(setup_p)
@@ -164,6 +179,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--warehouse",
         default=None,
         help="Snowflake warehouse to use (overrides the default for --warehouse-type and --scale)",
+    )
+    run_p.add_argument(
+        "--save-to-snowflake",
+        action="store_true",
+        default=False,
+        help="Save the run summary and full JSON results into the Snowflake hybrid table",
     )
     _add_connection_arg(run_p)
     _add_solution_arg(run_p)
