@@ -2,7 +2,7 @@ import { NextRequest } from "next/server"
 import { querySnowflake } from "@/lib/snowflake"
 import { openSession } from "@/lib/benchmark-client"
 import { reconcileHistory, startRun, state, stopRun, summarize } from "@/lib/benchmark"
-import { filterBinds, parseFilters, parseRunOptions, QUERIES, Side, SIDES, WAREHOUSES } from "@/lib/workload"
+import { filterBinds, parseFilters, parseRunOptions, QUERIES, Side, SIDES, TABLE, WAREHOUSES } from "@/lib/workload"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
         const rows = await querySnowflake(`SHOW PARAMETERS LIKE 'MAX_CONCURRENCY_LEVEL' IN WAREHOUSE ${WAREHOUSES[side]}`)
         return [side, rows[0]?.value ?? rows[0]?.VALUE ?? null]
       }))
-      return json({ warehouses, concurrency: Object.fromEntries(parameters), table: "CONCURRENCY_DEMO_DB.DEMO.SALES" })
+      return json({ warehouses, concurrency: Object.fromEntries(parameters), table: TABLE })
     } catch (error) { return json({ error: error instanceof Error ? error.message : "Configuration unavailable" }, 500) }
   }
   const latest = state.runs[0]

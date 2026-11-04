@@ -69,13 +69,14 @@ export async function openSession(side: Side): Promise<Session> {
   }
 }
 
-export async function openSessions(side: Side, count: number, signal: AbortSignal): Promise<Session[]> {
+export async function openSessions(side: Side, count: number, signal: AbortSignal, onOpened?: (opened: number) => void): Promise<Session[]> {
   const sessions: Session[] = []
   try {
     for (let offset = 0; offset < count; offset += 10) {
       if (signal.aborted) throw new Error("Preparation cancelled")
       const batch = await Promise.allSettled(Array.from({ length: Math.min(10, count - offset) }, () => openSession(side)))
       for (const result of batch) if (result.status === "fulfilled") sessions.push(result.value)
+      onOpened?.(sessions.length)
       const failure = batch.find((result) => result.status === "rejected")
       if (failure?.status === "rejected") throw failure.reason
     }

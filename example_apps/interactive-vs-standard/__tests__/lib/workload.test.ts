@@ -3,9 +3,9 @@ import { filterBinds, parseFilters, parseRunOptions, percentile, QUERIES, userFi
 
 describe("benchmark workload", () => {
   it("rejects arbitrary load and duration", () => {
-    expect(() => parseRunOptions({ users: 101, duration: 30, thinkMs: 0 })).toThrow()
-    expect(() => parseRunOptions({ users: 100, duration: 3600, thinkMs: 0 })).toThrow()
-    expect(parseRunOptions({ users: 50, duration: 30, thinkMs: 1000 })).toEqual({ users: 50, duration: 30, thinkMs: 1000 })
+    expect(() => parseRunOptions({ users: 101, duration: 300, think: "agent" })).toThrow()
+    expect(() => parseRunOptions({ users: 100, duration: 3600, think: "agent" })).toThrow()
+    expect(parseRunOptions({ users: 50, duration: 300, think: "mix" })).toEqual({ users: 50, duration: 300, think: "mix" })
   })
   it("rejects injected or out of range filters", () => {
     expect(() => parseFilters({ region: "1 OR TRUE", month: 6 })).toThrow()

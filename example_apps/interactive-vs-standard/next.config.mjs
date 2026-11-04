@@ -11,13 +11,18 @@
 // when adding new config.
 
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const { version } = JSON.parse(readFileSync(path.join(__dirname, "package.json"), "utf8"));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  env: {
+    NEXT_PUBLIC_APP_VERSION: version,
+  },
   outputFileTracingRoot: __dirname,
   turbopack: {
     root: __dirname,

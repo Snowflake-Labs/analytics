@@ -2,6 +2,10 @@
 
 This project deploys as an Application Service on Snowflake via `snow app deploy`.
 
+## Documentation
+
+*ALWAYS* keep code comments and README.md updated 
+
 ## Key APPLICATION SERVICE Commands
 
 | Command | Description |
@@ -41,3 +45,5 @@ SNOWFLAKE_WAREHOUSE=SNOWFLAKE_APPS_QUERY_WH
 ## Next Steps
 
 For complete reference on building, developing, deploying, and operating Snowflake Apps, invoke the **snowflake-apps** skill.
+
+

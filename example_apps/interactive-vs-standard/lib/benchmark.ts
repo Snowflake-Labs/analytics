@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto"
 import { openSessions, Session, QueryResult } from "./benchmark-client"
-import { filterBinds, percentile, QUERIES, RunOptions, Side, SIDES, userFilters } from "./workload"
+import { filterBinds, percentile, QUERIES, RunOptions, Side, SIDES, thinkMsFor, userFilters } from "./workload"
 import { querySnowflake } from "./snowflake"
 
 export interface Sample extends Omit<QueryResult, "rows"> {
@@ -13,13 +13,14 @@ export interface Run {
   createdAt: number; startedAt: number | null; endedAt: number | null; error: string | null
   samples: Sample[]; refreshes: Refresh[]; inFlight: Record<Side, number>
   submitted: Record<Side, number>; prepared: Record<Side, number>; controller: AbortController
+  preparation: { done: number; total: number; phase: string }
   historyError: string | null; historyUpdatedAt: number | null
 }
 interface State { runs: Run[]; active: Run | null; historyBusy: Set<string>; dashboardBusy: Set<Side>; maintenance: boolean; dashboardSessions: Partial<Record<Side, Session>> }
 const globalState = globalThis as typeof globalThis & { concurrencyDemo?: State }
 export const state = globalState.concurrencyDemo ??= { runs: [], active: null, historyBusy: new Set(), dashboardBusy: new Set(), maintenance: false, dashboardSessions: {} }
 state.dashboardSessions ??= {}
-export const MAX_QUERIES_PER_SIDE = 4000
+export const MAX_QUERIES_PER_SIDE = 50000
 
 function pause(milliseconds: number, signal: AbortSignal) {
   return new Promise<void>((resolve) => {
@@ -36,6 +37,8 @@ export function startRun(options: RunOptions): Run {
     id: randomUUID(), options, status: "preparing", createdAt: Date.now(), startedAt: null, endedAt: null, error: null,
     samples: [], refreshes: [], inFlight: { standard: 0, interactive: 0 }, submitted: { standard: 0, interactive: 0 },
     prepared: { standard: 0, interactive: 0 }, controller: new AbortController(), historyError: null, historyUpdatedAt: null,
+    // One step per session opened plus one per warm-up query (two passes of every widget query).
+    preparation: { done: 0, total: SIDES.length * options.users * (1 + 2 * QUERIES.length), phase: "Connecting sessions" },
   }
   state.active = run
   state.runs.unshift(run)
@@ -68,7 +71,7 @@ async function worker(run: Run, side: Side, session: Session, user: number) {
     }
     if (widgets) run.refreshes.push({ side, elapsedMs: performance.now() - started, success: successful && widgets === 4 })
     cycle++
-    await pause(run.options.thinkMs, run.controller.signal)
+    await pause(thinkMsFor(run.options.think, user, cycle), run.controller.signal)
   }
 }
 
@@ -76,14 +79,19 @@ async function executeRun(run: Run) {
   const sessions: Record<Side, Session[]> = { standard: [], interactive: [] }
   try {
     for (const side of SIDES) {
-      sessions[side] = await openSessions(side, run.options.users, run.controller.signal)
+      const label = side === "standard" ? "Standard" : "Interactive"
+      run.preparation.phase = `${label}: connecting sessions`
+      let opened = 0
+      sessions[side] = await openSessions(side, run.options.users, run.controller.signal, (count) => { run.preparation.done += count - opened; opened = count; run.prepared[side] = count })
       run.prepared[side] = sessions[side].length
       for (let repetition = 0; repetition < 2; repetition++) {
+        run.preparation.phase = `${label}: warming queries (pass ${repetition + 1} of 2)`
         const warmed = await Promise.allSettled(sessions[side].map(async (session, user) => {
           for (let widget = 0; widget < QUERIES.length; widget++) {
             if (run.controller.signal.aborted) throw new Error("Preparation cancelled")
             const result = await session.execute(QUERIES[widget], filterBinds(userFilters(user, 0)), `concurrency-warmup:${run.id}`, run.controller.signal)
             if (result.error) throw new Error(`${side} warm-up: ${result.error}`)
+            run.preparation.done++
           }
         }))
         const failure = warmed.find((result) => result.status === "rejected")
@@ -139,7 +147,7 @@ export function summarize(run: Run) {
   return {
     id: run.id, status: run.status, options: run.options, createdAt: run.createdAt, startedAt: run.startedAt,
     endedAt: run.endedAt, error: run.error, historyError: run.historyError, historyUpdatedAt: run.historyUpdatedAt,
-    elapsedSeconds: seconds, prepared: run.prepared,
+    elapsedSeconds: seconds, prepared: run.prepared, preparation: run.preparation,
     sides: Object.fromEntries(SIDES.map((side) => {
       const samples = run.samples.filter((sample) => sample.side === side)
       const successes = samples.filter((sample) => !sample.error)
