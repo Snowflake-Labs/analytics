@@ -49,30 +49,32 @@ Next.js loads `.env.local` automatically. Create it once to avoid typing env var
 
 ```sh
 # .env.local (gitignored)
-SNOWFLAKE_CONNECTION_NAME=PM
+SNOWFLAKE_CONNECTION_NAME=<your-connection>
 SNOWFLAKE_ROLE=CONCURRENCY_DEMO_APP
 SNOWFLAKE_WAREHOUSE=SNOWFLAKE_APPS_QUERY_WH
 ```
 
-Alternatively, pass them inline: `SNOWFLAKE_CONNECTION_NAME=PM SNOWFLAKE_ROLE=CONCURRENCY_DEMO_APP SNOWFLAKE_WAREHOUSE=SNOWFLAKE_APPS_QUERY_WH npm run dev`.
+Alternatively, pass them inline: `SNOWFLAKE_CONNECTION_NAME=<your-connection> SNOWFLAKE_ROLE=CONCURRENCY_DEMO_APP SNOWFLAKE_WAREHOUSE=SNOWFLAKE_APPS_QUERY_WH npm run dev`.
 
 Authentication uses the existing local Snowflake connection or the hosted Snowflake service identity; no credentials belong in source files. The hosted service is intended for trusted demo operators. All users with application access can run the bounded tests and suspend the dedicated warehouses.
 
 ## Deployment
 
-If the connection uses browser SSO (`externalbrowser`), sign in first with `snow connection test -c PM`. Otherwise the `snow app` commands appear to hang while the CLI waits for the login, because its progress spinner hides the prompt. Adding `client_store_temporary_credential = true` to the connection caches the token between runs.
+If the connection uses browser SSO (`externalbrowser`), sign in first with `snow connection test -c <your-connection>`. Otherwise the `snow app` commands appear to hang while the CLI waits for the login, because its progress spinner hides the prompt. Adding `client_store_temporary_credential = true` to the connection caches the token between runs.
 
 ```sh
-snow app validate --connection PM --role CONCURRENCY_DEMO_APP --secondary-roles NONE
-snow app deploy --connection PM --role CONCURRENCY_DEMO_APP --secondary-roles NONE --verbose
-snow app open --connection PM --role CONCURRENCY_DEMO_APP --print-only
+snow app validate --connection <your-connection> --role CONCURRENCY_DEMO_APP --secondary-roles NONE
+snow app deploy --connection <your-connection> --role CONCURRENCY_DEMO_APP --secondary-roles NONE --verbose
+snow app open --connection <your-connection> --role CONCURRENCY_DEMO_APP --print-only
 ```
 
 The CLI-generated `app.yml` targets `SNOWFLAKE_APPS.PUBLIC.CONCURRENCY_DEMO`. Deploy as the dedicated owner role; `EXECUTE_AS_ROLE` must not be set for this non-personal database. Service configuration is applied declaratively. The app uses a custom SVG icon.
 
-## Validation Results (2026-09-23)
+Verify ownership after any fresh deployment: both the `CONCURRENCY_DEMO` service and the `SNOWFLAKE_APPS.PUBLIC.CONCURRENCY_DEMO_REPO` artifact repository should be owned by CONCURRENCY_DEMO_APP. If the repository has a different owner, builds succeed but publishing fails with "Artifact Repository ... does not exist or operation not authorized"; fix with `GRANT OWNERSHIP ON ARTIFACT REPOSITORY SNOWFLAKE_APPS.PUBLIC.CONCURRENCY_DEMO_REPO TO ROLE CONCURRENCY_DEMO_APP COPY CURRENT GRANTS`.
 
-Measured on the 10M-row `SALES_10M` table, from the local application against the PM account, not from the hosted container. All measured queries completed without errors. Both warehouses used MAX_CONCURRENCY_LEVEL=8; standard was Gen2.
+## Validation Results
+
+Measured on the 10M-row `SALES_10M` table from a local application instance, not from the hosted container. All measured queries completed without errors. Both warehouses used MAX_CONCURRENCY_LEVEL=8; standard was Gen2.
 
 | Users per warehouse | Think time | Refresh p95 standard | Refresh p95 interactive | Queue p95 standard | Queue p95 interactive |
 | --- | --- | --- | --- | --- | --- |
@@ -80,11 +82,9 @@ Measured on the 10M-row `SALES_10M` table, from the local application against th
 | 100 | 1 second | 1.779 s | 0.933 s | 279 ms | 44 ms |
 | 100 | 3 seconds | 2.029 s | 0.991 s | 318 ms | 49 ms |
 
-The first two runs reached the interactive-side query cap. The third did not. These observations demonstrate lower latency and less queuing, not guaranteed queue-free execution at 100 users. Run IDs: `77b133ee-1460-4ce7-8c7e-af30f3ba46d7`, `d290f2ac-95c0-47bc-aba7-ed83819730e7`, `76ae3d49-02d8-4cb5-8fa8-c8b23bf53fa0`.
+The first two runs reached the interactive-side query cap. The third did not. These observations demonstrate lower latency and less queuing, not guaranteed queue-free execution at 100 users.
 
-The deployed endpoint is https://ggvfaai4s-pm-pm-aws-us-west-2.snowflakecomputing.app. Service ownership was explicitly verified as CONCURRENCY_DEMO_APP; this environment did not honor the CLI role flag during initial creation, so ownership must be verified after any fresh deployment. This applies to both the `CONCURRENCY_DEMO` service and the `SNOWFLAKE_APPS.PUBLIC.CONCURRENCY_DEMO_REPO` artifact repository. If the repository is not owned by CONCURRENCY_DEMO_APP, builds succeed but publishing fails with "Artifact Repository ... does not exist or operation not authorized"; fix with `GRANT OWNERSHIP ON ARTIFACT REPOSITORY SNOWFLAKE_APPS.PUBLIC.CONCURRENCY_DEMO_REPO TO ROLE CONCURRENCY_DEMO_APP COPY CURRENT GRANTS`. The initial service was recreated before handoff. Live logs confirm the final server starts. Browser automation was blocked by the environment, so visual and authenticated hosted end-to-end checks remain manual.
-
-Next.js and other affected runtime dependencies were updated within compatible ranges. `npm audit --omit=dev` still reports two high-severity findings associated with the Snowflake SDK's transitive `toml` dependency. The app does not accept TOML uploads; no forced SDK downgrade was applied. Review these before expanding the demo beyond trusted operators.
+`npm audit --omit=dev` still reports two high-severity findings associated with the Snowflake SDK's transitive `toml` dependency. The app does not accept TOML uploads; no forced SDK downgrade was applied. Review these before expanding the demo beyond trusted operators.
 
 ## Main Files
 

@@ -37,7 +37,7 @@ Next.js loads `.env.local` automatically on `npm run dev`. Use it to set Snowfla
 
 ```sh
 # .env.local (gitignored)
-SNOWFLAKE_CONNECTION_NAME=PM
+SNOWFLAKE_CONNECTION_NAME=<your-connection>
 SNOWFLAKE_ROLE=CONCURRENCY_DEMO_APP
 SNOWFLAKE_WAREHOUSE=SNOWFLAKE_APPS_QUERY_WH
 ```
