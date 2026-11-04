@@ -105,7 +105,7 @@ The benchmark runs on [Snowpark Container Services](https://docs.snowflake.com/e
 ### Approved Container Image
 
 Both services use
-`SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES/interactive-analytics/interactive-benchmark:0.3.1`;
+`SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES/interactive-analytics/interactive-benchmark:0.3.5`;
 `BENCHMARK_ROLE=api|locust` selects the runtime. Benchmark users do not build
 images or need `CREATE IMAGE REPOSITORY`.
 
@@ -139,45 +139,4 @@ $SCRIPTS/upload-queries.sh      # upload .sql files to the queries stage
 $SCRIPTS/resize-wh.sh --size M  # resize the interactive warehouse
 $SCRIPTS/teardown.sh            # drop services and compute pools
 ```
-
-## Running Locally (manual)
-
-As with SPCS deployment, the skill manages local execution automatically. These instructions are for those who want to run the API server manually outside of CoCo, for debugging or development purposes.
-
-1. Copy `.env.template` to `.env` and configure:
-
-   ```
-   CONNECTION_NAME=<your_connection>
-   SOLUTION_NAME=<your_solution_name>
-   ```
-
-   The connection must exist in `~/.snowflake/connections.toml`.
-
-   All Snowflake object names are derived from `SOLUTION_NAME`:
-
-   | Object | Name |
-   |---|---|
-   | Database | `<SOLUTION_NAME>_DB` |
-   | Interactive warehouse | `<SOLUTION_NAME>_INT_WH` |
-   | Interactive schema | `<SOLUTION_NAME>_IT` |
-
-   Override any of these with env vars: `INTERACTIVE_WAREHOUSE`, `INTERACTIVE_SCHEMA`.
-
-2. Start the API server:
-
-   ```bash
-   cd interactive-benchmark/spcs-images/api
-   uv run python server.py
-   ```
-
-   The server runs on port 3000. It loads all `.sql` files from the `test/` directory into a query registry keyed by filename stem (e.g. `test/q1.sql` → `query_id: "q1"`). Test with:
-   ```bash
-   # List available queries
-   curl http://localhost:3000/api/queries
-
-   # Run a query by ID
-   curl -X POST http://localhost:3000/api/run/interactive \
-     -H "Content-Type: application/json" \
-     -d '{"query_id": "q1"}'
-   ```
 

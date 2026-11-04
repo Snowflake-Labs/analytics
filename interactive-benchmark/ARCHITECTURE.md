@@ -4,7 +4,7 @@ The benchmark infrastructure runs the API server
 **and** the [Locust](https://locust.io) load test entirely inside Snowflake, with public
 ingress URLs you can hit from your laptop.
 
-Container images (Dockerfiles and app source code) live in `interactive-benchmark/spcs-images/`.
+The container image is built from internal source and published to the System Registry.
 The CoCo skill (`.cortex/skills/interactive-benchmark/`) handles deployment and orchestration
 using pre-built images.
 
@@ -60,12 +60,6 @@ All paths below are relative to the repo root.
     ├── config.env           # all knobs (connection, names, resources, locust params)
     ├── config.env.template  # template for config.env
     └── specs/               # SPCS service YAML specs
-
-interactive-benchmark/spcs-images/
-├── Dockerfile               # one image containing both runtimes
-├── role-entrypoint.sh       # BENCHMARK_ROLE=api|locust dispatcher
-├── api/                     # benchmark API source
-└── locust/                  # Locust source
 ```
 
 Benchmark query `.sql` files live in `test/` locally and are uploaded to a
@@ -107,7 +101,7 @@ rebuilding images.
 5. Print the public ingress URLs.
 
 Both services use the immutable approved image
-`interactive-analytics/interactive-benchmark:0.3.1` from
+`interactive-analytics/interactive-benchmark:0.3.5` from
 `SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES`; their specs select
 `BENCHMARK_ROLE=api` or `BENCHMARK_ROLE=locust`.
 
@@ -145,9 +139,8 @@ image rebuild is needed — takes seconds instead of minutes.
 
 ### Changing application code
 
-Edit the app source in `interactive-benchmark/spcs-images/`, validate both
-roles, and publish a new immutable approved-image version through the
-maintainer release process. Update `IMAGE_TAG` only after the new tag is
+The image source is maintained internally; changes ship as a new immutable
+approved-image version through the maintainer release process. Update `IMAGE_TAG` only after the new tag is
 visible in the System Registry; never replace or deploy `latest`.
 
 ## Auth model inside the container
@@ -158,7 +151,7 @@ Every SPCS container gets:
 - An OAuth token file at `/snowflake/session/token` scoped to the service's
   owner role.
 
-`spcs/api/entrypoint.sh` (in `interactive-benchmark/spcs-images/api/`) writes a small `~/.snowflake/connections.toml`
+The image's API entrypoint writes a small `~/.snowflake/connections.toml`
 pointing at that token file and sets `CONNECTION_NAME=spcs`. The unchanged
 `api/server.py` picks it up via its normal `connections.toml` path.
 

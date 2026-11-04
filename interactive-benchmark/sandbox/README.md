@@ -2,10 +2,9 @@
 
 `launch.py` runs one benchmark in a [Cortex Sandbox](https://docs.snowflake.com/en/LIMITEDACCESS/developer-guide/cortex-sandboxes/overview)
 (private preview, enabled per account) with a single command. It needs no compute pool and no
-service. With `--image` the sandbox runs the released benchmark image, which is how Snowsight
-runs it (see [Running the benchmark image](#running-the-benchmark-image)); without it, the
-sandbox runs the API, Locust and controller sources from this checkout, so it also works
-before an image release.
+service. The sandbox runs the released benchmark image, which is how Snowsight runs it (see
+[Running the benchmark image](#running-the-benchmark-image)). The image is built from internal
+source.
 
 The sandbox runs as **your** Snowflake identity, with the role you pass. The benchmark can
 only read what that role can read.
@@ -25,14 +24,15 @@ python3 -m venv .venv
   [--image /snowflake/images/snowflake_images/interactive-analytics/interactive-benchmark:<tag>]
 ```
 
-`--image` needs an image with `controller/run.sh` (0.3.0 or later).
+`--image` defaults to the current release (`launch.IMAGE`); an older image needs
+`controller/run.sh` (0.3.0 or later).
 
 Pin the SDK: it is published only as pre-releases, and the launcher works around 0.2.2a4
 behaviour (see [How it works](#how-it-works)).
 
 ## Config
 
-`run.json` follows [`iwb-config.schema.json`](../spcs-images/controller/iwb/iwb-config.schema.json):
+`run.json` is validated by the image's controller (exit 30 names the invalid field):
 
 ```json
 {
@@ -115,7 +115,7 @@ which `GET` downloads as a `.part#...` file; ignore it.
 | 30 | Invalid config, or missing access (the event says what) |
 | 40 | Infrastructure (API not ready or exited during the load, baseline gate failed) |
 | 1 | Unexpected error (the `failed` event of the step it stopped, and `error` in `result.json`), a failed results copy (`results_copy_failed`), or a launcher error |
-| 64, 65 | `bootstrap.sh` or `run.sh` usage error, or an incomplete bundle |
+| 64 | `run.sh` usage error |
 | 143, 130 | Launcher stopped by SIGTERM or SIGINT; the controller tore down first (a deadline exits 1 after the same teardown) |
 
 When the run exits without the controller's final event, or with a different code, the launcher also prints the tail of the run log.
@@ -176,7 +176,6 @@ standard warehouse for `report.warehouse`, and permission to create sandboxes. I
 | Symptom | Likely cause |
 |---|---|
 | Exception from `Sandbox.create` (auth error or 403) | Cortex Sandboxes are not enabled for the account, or the role cannot create sandboxes |
-| `run exited` after a uv or pip 403 or download error | The sandbox cannot reach pypi.org (without `--image` only) |
 | Exit 30, `does not compile for this role` | Missing USAGE or SELECT on an object the query reads |
 | Exit 30, `Query IDs not found` | Not visible to you (not your own, no MONITOR), or older than job retention (14 days by default): set `lookup_warehouse` to search ACCOUNT_USAGE |
 | Exit 30, `Cannot write the benchmark report` ... `Unknown user-defined function` | The role cannot see `WRITE_BENCHMARK_REPORT`: grant it `SNOWFLAKE_INTERACTIVE_BENCHMARK_ROLE` |
@@ -188,18 +187,15 @@ standard warehouse for `report.warehouse`, and permission to create sandboxes. I
 
 ## Timing and sizing
 
-- A 3-minute run takes about 7 minutes: sandbox and install 10 s–1 min, warehouse creation ~2 min,
+- A 3-minute run takes about 7 minutes: sandbox start 10 s–1 min, warehouse creation ~2 min,
   warm-up, the 1-minute baseline, ramp-up plus `run_minutes`, then measurement and teardown.
 - The API and Locust share one container. The launcher picks the memory tier from
   `concurrent_users`: 4g (2 cores) up to 50, 16g (4 cores) up to 200, 32g (6 cores) above.
   Verified up to 200 users on 16g (baseline p99 2 ms at 200 req/s); the baseline gate fails
   (exit 40) if the sandbox cannot keep up.
-- The launcher's deadline is the controller's worst case (`spcs-images/controller/iwb/budget.py`:
-  two 15-minute warehouse waits, the Locust timeout, setup and teardown, and 20 s per workload
-  query) plus 10 minutes for the install, so the controller normally times out and cleans up
-  first. Each query is warmed three times, so with hundreds of queries most of the run's setup
-  is warm-up. `idle_suspend` is that plus 5
-  minutes.
+- The launcher's deadline is a fixed 3 hours (`RUN_LIMIT`), and `idle_suspend` is that plus 5
+  minutes. A run that is still going then is stopped and torn down like a cancelled one, so
+  keep `run_minutes` and the number of workload queries (each is warmed three times) well inside it.
 - If the launcher is stopped or hits its deadline, it sends SIGTERM to the controller and waits
   up to 5 minutes for teardown (which drops a created warehouse) before terminating the sandbox.
 
@@ -229,7 +225,7 @@ host such as Snowsight. Use image `/snowflake/images/snowflake_images/interactiv
   the sandbox. That lets it drop a warehouse it created. Further signals are ignored while it
   tears down.
 
-`launch.py --image` instead drives the image through `exec` calls. It writes the config, starts
+`launch.py` instead drives the image through `exec` calls. It writes the config, starts
 `/app/controller/run.sh /var/tmp/iwb/config.json` detached with its output in
 `/var/tmp/iwb/run.log` and its exit code in `/var/tmp/iwb/run.rc`, and polls both. To cancel,
 it creates `/var/tmp/iwb/stop` and sends SIGTERM to the PID in `/var/tmp/iwb/controller.pid`.
@@ -239,14 +235,10 @@ copies the results to the stage mount (`IWB_RESULTS_COPY_DIR`) at the end.
 
 ## How it works
 
-Without `--image`:
+1. The launcher creates a sandbox from the benchmark image as your role and uploads your config.
+2. It starts the image's `controller/run.sh` detached, as in [Running the benchmark image](#running-the-benchmark-image).
+3. It relays events from the run log until the controller exits, prints `result.json`, then terminates the sandbox.
 
-1. The launcher creates a sandbox, uploads a zipped bundle (`spcs-images/{api,locust,controller}` plus `bootstrap.sh` and your config) and unpacks it.
-2. It starts `bootstrap.sh` detached. The script installs the pinned dependencies from the `uv.lock` files (pypi.org only; the sandbox cannot reach internal mirrors).
-3. `bootstrap.sh` then runs `controller/run.sh config.json`, which starts the same controller as the image's `controller` role.
-4. The launcher relays events from the run log until the controller exits, prints `result.json`, then terminates the sandbox.
-
-With `--image`, steps 1 to 3 are those of [Running the benchmark image](#running-the-benchmark-image).
 
 The SDK's `code=`/`command=` option is not used. In `snowflake-sandbox-python` 0.2.2a4 it drops `role` and `idle_suspend`, runs the command before the code is extracted, and keeps the sandbox running after the command exits, so `poll()` never returns.
 
