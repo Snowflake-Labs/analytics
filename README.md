@@ -13,9 +13,12 @@ Follow the [Getting Started guide](./interactive-benchmark/GETTING-STARTED.md) f
 
 ## Contents
 
-### [`tpc-h/`](tpc-h/)
+### [`benchmarks/`](benchmarks/)
 
-TPC-H benchmark harness for Snowflake **Interactive Warehouses**. Copies TPC-H tables from `SNOWFLAKE_SAMPLE_DATA` into a local benchmark database, then runs the 22 standard queries (original and modern rewrites) against standard or interactive tables at scale factors 1, 10, 100, and 1000. See [`tpc-h/README.md`](tpc-h/README.md) for setup and usage.
+Benchmark harnesses for Snowflake **Interactive Warehouses**, sharing one Python core ([`benchmarks/core/`](benchmarks/core/)) for setup, execution, timing, validation and result storage. Each runs against standard, interactive and iceberg tables, on standard or interactive warehouses, at scale factors 1, 10, 100 and 1000. See [`benchmarks/README.md`](benchmarks/README.md).
+
+- [`benchmarks/tpc-h/`](benchmarks/tpc-h/) — copies TPC-H tables from `SNOWFLAKE_SAMPLE_DATA` into a local benchmark database and runs the 22 standard queries (original and modern rewrites). See [`benchmarks/tpc-h/README.md`](benchmarks/tpc-h/README.md).
+- [`benchmarks/ssb/`](benchmarks/ssb/) — Star Schema Benchmark: derives the SSB star schema from the TPC-H sample data and runs the 13 SSB queries (original, modern and flat/denormalized variants). See [`benchmarks/ssb/README.md`](benchmarks/ssb/README.md).
 
 ### [`tpc-h-sample-dashboard/`](tpc-h-sample-dashboard/)
 
