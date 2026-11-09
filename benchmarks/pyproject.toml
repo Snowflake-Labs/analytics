@@ -11,6 +11,13 @@ package = false
 [tool.uv.workspace]
 members = ["core", "tpc-h", "ssb"]
 
+# Resolve from public PyPI regardless of machine-level uv config (e.g. an
+# internal mirror in /etc/uv/uv.toml), so uv.lock works for everyone.
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
 [tool.ruff]
 target-version = "py313"
 line-length = 100
