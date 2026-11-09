@@ -1,0 +1,106 @@
+[
+  {
+    "query": "Q1.1",
+    "output": {
+      "REVENUE": 4460312038.5
+    }
+  },
+  {
+    "query": "Q1.2",
+    "output": {
+      "REVENUE": 987140046.03
+    }
+  },
+  {
+    "query": "Q1.3",
+    "output": {
+      "REVENUE": 262327010.05
+    }
+  },
+  {
+    "query": "Q2.1",
+    "output": {
+      "REVENUE": 6564108.39,
+      "D_YEAR": 1992,
+      "P_BRAND1": "MFGR#121"
+    }
+  },
+  {
+    "query": "Q2.2",
+    "output": {
+      "REVENUE": 8947908.33,
+      "D_YEAR": 1992,
+      "P_BRAND1": "MFGR#2221"
+    }
+  },
+  {
+    "query": "Q2.3",
+    "output": {
+      "REVENUE": 5052700.28,
+      "D_YEAR": 1992,
+      "P_BRAND1": "MFGR#2239"
+    }
+  },
+  {
+    "query": "Q3.1",
+    "output": {
+      "C_NATION": "CHINA",
+      "S_NATION": "CHINA",
+      "D_YEAR": 1992,
+      "REVENUE": 68430185.33
+    }
+  },
+  {
+    "query": "Q3.2",
+    "output": {
+      "C_CITY": "UNITED ST0",
+      "S_CITY": "UNITED ST6",
+      "D_YEAR": 1992,
+      "REVENUE": 1890146.9
+    }
+  },
+  {
+    "query": "Q3.3",
+    "output": {
+      "C_CITY": "UNITED KI1",
+      "S_CITY": "UNITED KI5",
+      "D_YEAR": 1992,
+      "REVENUE": 727521.41
+    }
+  },
+  {
+    "query": "Q3.4",
+    "output": {
+      "C_CITY": "UNITED KI5",
+      "S_CITY": "UNITED KI5",
+      "D_YEAR": 1997,
+      "REVENUE": 173780.58
+    }
+  },
+  {
+    "query": "Q4.1",
+    "output": {
+      "D_YEAR": 1992,
+      "C_NATION": "ARGENTINA",
+      "PROFIT": 100066352.31
+    }
+  },
+  {
+    "query": "Q4.2",
+    "output": {
+      "D_YEAR": 1997,
+      "S_NATION": "ARGENTINA",
+      "P_CATEGORY": "MFGR#11",
+      "PROFIT": 8482799.27
+    }
+  },
+  {
+    "query": "Q4.3",
+    "output": {
+      "D_YEAR": 1997,
+      "S_CITY": "UNITED ST0",
+      "P_BRAND1": "MFGR#1410",
+      "PROFIT": 45915.83
+    }
+  }
+]

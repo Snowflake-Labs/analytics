@@ -1,0 +1,3 @@
+-- Teardown benchmark database
+USE ROLE SYSADMIN;
+DROP DATABASE IF EXISTS {{SOLUTION_NAME}}_BENCH_DB;
