@@ -53,6 +53,27 @@ pools. It also verifies that the service-owner role can use both warehouses
 and execute the benchmark queries against the interactive schema. No Docker setup
 is required.
 
+To check manually that the image exists and your role can see it, list the
+images in the system registry and filter for the benchmark image (the tag is
+`IMAGE_TAG` in `spcs-images/.env`; see the README for the current version):
+
+```sql
+USE ROLE SYSADMIN;  -- or the role you deploy with
+
+-- Show the repository and your privileges on it
+SHOW IMAGE REPOSITORIES LIKE 'SNOWFLAKE_IMAGES' IN SCHEMA SNOWFLAKE.IMAGES;
+
+-- List images and keep only the benchmark ones
+SHOW IMAGES IN IMAGE REPOSITORY SNOWFLAKE.IMAGES.SNOWFLAKE_IMAGES;
+SELECT "image_name", "tags", "image_path"
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "image_path" ILIKE '%interactive-benchmark%';
+```
+
+If the benchmark image and the tag you expect are returned, your role has access.
+If the query fails or returns no rows, ask an administrator to grant your role
+read access to the repository.
+
 ## 4. Run the benchmark
 
 In the Cortex Code chat panel, type something like:

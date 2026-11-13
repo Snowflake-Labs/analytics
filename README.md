@@ -7,7 +7,9 @@ workloads.
 
 ## Getting Started
 
-**Looking for the Interactive Benchmark skill?** Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18** and [CoCo Desktop](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-desktop) **v1.22.1**, the `interactive-benchmark` skill is available natively — no need to clone this repository. Just open CoCo CLI or CoCo Desktop and invoke the skill directly.
+**Looking for the Interactive Benchmark skill?** Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli) **v1.2.18** and [CoCo Desktop](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-desktop) **v1.22.1**, the [`interactive-benchmark` skill](https://docs.snowflake.com/en/user-guide/interactive-skills#the-interactive-benchmark-skill) is available natively — no need to clone this repository. Just open CoCo CLI or CoCo Desktop and invoke the skill directly.
+
+Full documentation available here: [The interactive-benchmark skill](https://docs.snowflake.com/en/user-guide/interactive-skills#the-interactive-benchmark-skill)
 
 Follow the [Getting Started guide](./interactive-benchmark/GETTING-STARTED.md) for prerequisites and a step-by-step walkthrough.
 
@@ -19,6 +21,13 @@ Benchmark harnesses for Snowflake **Interactive Warehouses**, sharing one Python
 
 - [`benchmarks/tpc-h/`](benchmarks/tpc-h/) — copies TPC-H tables from `SNOWFLAKE_SAMPLE_DATA` into a local benchmark database and runs the 22 standard queries (original and modern rewrites). See [`benchmarks/tpc-h/README.md`](benchmarks/tpc-h/README.md).
 - [`benchmarks/ssb/`](benchmarks/ssb/) — Star Schema Benchmark: derives the SSB star schema from the TPC-H sample data and runs the 13 SSB queries (original, modern and flat/denormalized variants). See [`benchmarks/ssb/README.md`](benchmarks/ssb/README.md).
+
+### [`example_apps/`](example_apps/)
+
+Complete sample applications that show interactive warehouses in real workloads.
+
+- [`example_apps/interactive-vs-standard/`](example_apps/interactive-vs-standard/) — "The Concurrency Test": a Snowflake-hosted Next.js app that runs the same retail queries on an XSMALL standard warehouse and an XSMALL interactive warehouse side by side, with 1 to 100 virtual users, and compares p95 latency, errors and queue time. See [`example_apps/interactive-vs-standard/README.md`](example_apps/interactive-vs-standard/README.md).
+- [`example_apps/postgres_sync/`](example_apps/postgres_sync/) — the same analytical dashboard (Cube Core + Next.js, 32 tiles) running against Postgres and Snowflake, with a synthetic data generator and a connectivity check. See [`example_apps/postgres_sync/README.md`](example_apps/postgres_sync/README.md).
 
 ### [`tpc-h-sample-dashboard/`](tpc-h-sample-dashboard/)
 
