@@ -8,7 +8,7 @@ See [GETTING-STARTED.md](GETTING-STARTED.md) for a step-by-step walkthrough, the
 
 ## Sample Prompt
 
-Below is a sample prompt you can use with the `interactive-benchmark` CoCo skill. It works against a TPC-H database that can be created using the setup script in the [`tpc-h/`](../tpc-h/) folder (run `./iwtpch.sh setup --scale 100`).
+Below is a sample prompt you can use with the `interactive-benchmark` CoCo skill. It works against a TPC-H database that can be created using the setup script in the [`benchmarks/tpc-h/`](../benchmarks/tpc-h/) folder (run `./iwtpch.sh setup --scale 100`).
 
 ```
 $interactive-benchmark hi, I have the following query
