@@ -54,7 +54,7 @@ WHERE  l_shipdate BETWEEN '1998-08-01' AND '1998-08-31'
 GROUP  BY l_returnflag, l_linestatus
 ORDER  BY l_returnflag, l_linestatus;
 
-tables are in database SNOWFLAKE_SAMPLE_DATA. The tables are in the schema TPCH_SF1.
+tables are in database SNOWFLAKE_SAMPLE_DATA. The tables are in the schema TPCH_SF100.
 ```
 
 The skill takes over from here. It will:
