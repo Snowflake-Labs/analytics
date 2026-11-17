@@ -1,1 +1,0 @@
-"""Interactive warehouse benchmark controller."""
