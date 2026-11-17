@@ -1,0 +1,11 @@
+-- Benchmark interactive warehouse setup (per scale factor)
+-- Requires: standard warehouse (for fallback) and interactive tables already created.
+USE ROLE SYSADMIN;
+
+CREATE OR REPLACE INTERACTIVE WAREHOUSE {{SOLUTION_NAME}}_BENCH_WH_INT_{{SCALE}}
+  TABLES (
+{{TABLE_LIST}}
+  )
+  WAREHOUSE_SIZE = '{{BENCH_WH_SIZE}}';
+ALTER WAREHOUSE {{SOLUTION_NAME}}_BENCH_WH_INT_{{SCALE}} RESUME IF SUSPENDED;
+ALTER WAREHOUSE {{SOLUTION_NAME}}_BENCH_WH_INT_{{SCALE}} SET FALLBACK_WAREHOUSE = {{SOLUTION_NAME}}_BENCH_WH_STD_{{SCALE}};

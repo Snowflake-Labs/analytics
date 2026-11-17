@@ -33,9 +33,9 @@ Route to the matching section below.
 
 **Actions:**
 
-1. Ensure `.env` exists in `tpc-h/`:
+1. Ensure `.env` exists in `benchmarks/tpc-h/`:
    ```bash
-   cp tpc-h/.env.example tpc-h/.env
+   cp benchmarks/tpc-h/.env.example benchmarks/tpc-h/.env
    ```
 
 2. Ask the user for configuration:
@@ -43,11 +43,11 @@ Route to the matching section below.
    - `SOLUTION_NAME` — prefix for all object names (default: `TPCH`)
    - `DEFAULT_SCALE` — scale factor: 1, 10, 100, or 1000 (default: 10)
 
-3. Update `tpc-h/.env` with the user's values.
+3. Update `benchmarks/tpc-h/.env` with the user's values.
 
 4. Run setup:
    ```bash
-   cd <REPO_ROOT>/tpc-h && ./iwtpch.sh setup --scale <SCALE>
+   cd <REPO_ROOT>/benchmarks/tpc-h && ./iwtpch.sh setup --scale <SCALE>
    ```
 
 **Objects created:**
@@ -75,7 +75,7 @@ Route to the matching section below.
 
 2. Run the benchmark:
    ```bash
-   cd <REPO_ROOT>/tpc-h && ./iwtpch.sh run \
+   cd <REPO_ROOT>/benchmarks/tpc-h && ./iwtpch.sh run \
      --warehouse-type <WAREHOUSE_TYPE> \
      --tables-type <TABLES_TYPE> \
      --scale <SCALE> \
@@ -88,7 +88,7 @@ Route to the matching section below.
    - `--repeats 5` — best of N executions per query
    - `--iterations 3` — full workload passes
 
-3. Results are saved to `tpc-h/results/run_<warehouse_type>-<tables_type>_sf<scale>_<workload>_<timestamp>.json` and `.csv`.
+3. Results are saved to `benchmarks/tpc-h/results/run_<warehouse_type>-<tables_type>_sf<scale>_<workload>_<timestamp>.json` and `.csv`.
 
 **Typical comparison flow:**
 ```bash
@@ -104,7 +104,7 @@ At SF1, result validation automatically checks against reference values in `tpc-
 
 **TPC-H resources** for one scale. By default this drops the warehouses **and** the standard, interactive, and iceberg table schemas for that scale; the database is kept unless `--drop-database` is passed:
 ```bash
-cd <REPO_ROOT>/tpc-h && ./iwtpch.sh teardown --scale <SCALE>
+cd <REPO_ROOT>/benchmarks/tpc-h && ./iwtpch.sh teardown --scale <SCALE>
 ```
 
 To drop less, pass `--tables-type <standard|interactive|iceberg>` and/or `--warehouse-type <standard|interactive>`.
@@ -127,4 +127,4 @@ To drop less, pass `--tables-type <standard|interactive|iceberg>` and/or `--ware
 
 ## Output
 
-- TPC-H benchmark results (JSON + CSV) in `tpc-h/results/`
+- TPC-H benchmark results (JSON + CSV) in `benchmarks/tpc-h/results/`
