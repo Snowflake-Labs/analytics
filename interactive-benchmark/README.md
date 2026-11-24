@@ -6,6 +6,22 @@ Starting with [Cortex Code (CoCo) CLI](https://docs.snowflake.com/en/user-guide/
 
 See [GETTING-STARTED.md](GETTING-STARTED.md) for a step-by-step walkthrough, the [slide deck](https://snowflake-labs.github.io/analytics/interactive-benchmark/slide-deck/index.html) for an overview presentation, and the [sample report](https://snowflake-labs.github.io/analytics/interactive-benchmark/sample-report/benchmark-report.html) for an example of the generated benchmark output.
 
+## Benchmark Modes
+
+Every run is exactly one of two benchmark types. The skill infers the type from your request and asks only if it is unclear.
+
+| | **Latency target** | **Maximum concurrency (RPS / QPS)** |
+|---|---|---|
+| Question answered | Can the query meet a P95 goal at N concurrent users? | How many requests per second can a fixed warehouse configuration sustain? |
+| Typical request | "P95 under 1 second with 50 users" | "max QPS", "peak throughput", "stress it to the limit", "think time 0" |
+| Think time | `0.5`-`1.5` s (default) | `0` (always) |
+| Warehouse | Starting point plus size and cluster ceilings; auto-scales up/out until the goal is met | Fixed size and cluster count for the whole run; never scaled |
+| Goal check and escalation | Yes (bounded by max iterations) | Skipped |
+| Headline result | P95 vs goal (met / not met / limit-bound) | Sustained requests/sec, plus the P50/P95/P99 observed at that load |
+| Report | Latency report | RPS report |
+
+RPS and QPS are the same metric: each Locust request runs exactly one query.
+
 ## Sample Prompt
 
 Below is a sample prompt you can use with the `interactive-benchmark` CoCo skill. It works against a TPC-H database that can be created using the setup script in the [`benchmarks/tpc-h/`](../benchmarks/tpc-h/) folder (run `./iwtpch.sh setup --scale 100`).
@@ -34,6 +50,17 @@ Please also run a benchmark so that I can see how it performs when there are 50
 concurrent users
 ```
 
+For a **maximum concurrency** run, ask for throughput instead of a latency goal, for example:
+
+```
+$interactive-benchmark Find the maximum QPS (requests per second) that an X-Small interactive
+warehouse can sustain for this query with 50 concurrent users and no think time:
+
+<your query>
+
+The tables are in database DM_TESTTPCH_BENCH_DB, schema TPCH_SF100.
+```
+
 Adapt the database name, schema, scale factor, and connection name to match your own environment.
 
 ## Benchmark Reports
@@ -44,7 +71,8 @@ When running the skill via CoCo, benchmark reports and artifacts are saved to:
 ~/.snowflake/interactive-benchmark/reports/<SOLUTION_NAME>/
 ├── benchmark-report.html   # Final HTML report
 ├── progress.json           # Step-by-step progress tracker
+├── queries/*.sql           # The exact queries benchmarked
 ├── locust-run-1.txt        # Raw Locust output for iteration 1
-├── locust-run-2.txt        # (if escalation triggered re-runs)
+├── locust-run-2.txt        # (latency runs only: escalation re-runs)
 └── ...                     # Additional runs as needed
 ```
